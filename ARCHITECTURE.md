@@ -201,6 +201,22 @@ each write a single atomic append and preserves the full history.
   whose own announce was empty. A subagent that announced its own resources
   keeps them and is left untouched.
 
+Two boundary rules govern the backfill:
+
+- It fires only when the session's `resources_deployed` is **non-empty**. A
+  session that announced bare ("no registry match") or never announced at all
+  backfills nothing — its subagents keep their empty lists.
+- A subagent whose own announce was bare (`bare: true`, an empty list) **is**
+  backfilled with the session list: bare says "nothing deployed by name," so
+  the session-level attribution still applies. Because that attribution is
+  coarse (session granularity, not task granularity), heuristics consumers may
+  weight `resources_source: "task"` records above `"session-backfill"` records
+  when computing per-resource statistics.
+
+The backfill is idempotent across repeated SessionEnd events (resumed
+sessions): the harvest cursor records which session resource list each agent
+was backfilled with, and an unchanged session re-emits nothing.
+
 **Not publishable — local-only by design.** Metrics records embed project
 slugs and git branch names that identify client work, and `redact()` scrubs
 credentials only — not those identifiers. The `metrics/` directory is untracked

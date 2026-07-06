@@ -442,6 +442,9 @@ def _maybe_harvest_file(path, event, kind, metrics_dir, cursor,
         return None   # unchanged and already harvested
     record = build_record(path, event, kind, session_id=session_id, extra=extra)
     _append_record(metrics_dir, record)
+    # Rewriting the whole entry INTENTIONALLY drops any "backfilled" marker:
+    # a re-emitted task record supersedes its old backfill (last-wins), so the
+    # next SessionEnd must consider backfilling this agent afresh (N1 case a).
     cursor[key] = {
         "mtime": st.st_mtime_ns,
         "size": st.st_size,
@@ -494,6 +497,7 @@ def harvest(transcript, event, metrics_dir, session_id=None):
             emitted.append(rec)
     else:
         tasks_harvested = 0
+        reemitted_tasks = set()   # agent keys whose task record re-emitted now
         subdir = _subagents_dir(transcript)
         if event == "SessionEnd" and subdir.is_dir():
             for agent_file in sorted(subdir.glob("agent-*.jsonl")):
@@ -502,6 +506,7 @@ def harvest(transcript, event, metrics_dir, session_id=None):
                 if rec:
                     emitted.append(rec)
                     tasks_harvested += 1
+                    reemitted_tasks.add(str(pathlib.Path(agent_file).resolve()))
         session_rec = _maybe_harvest_file(
             transcript, event, "session", metrics_dir, cursor,
             session_id=session_id, extra={"tasks_harvested": tasks_harvested})
@@ -514,14 +519,30 @@ def harvest(transcript, event, metrics_dir, session_id=None):
         # session's resources_deployed is known and non-empty, re-emit a
         # REPLACEMENT task record (last-wins) for every subagent whose OWN
         # announce was empty, tagged resources_source="session-backfill". This
-        # is a re-emit, NOT a re-cursor: the cursor is left untouched (so
-        # SubagentStop-time skipping is unaffected), and a subagent that
-        # announced its own resources is skipped (no unchanged-duplicate).
+        # is a re-emit, NOT a re-cursor: mtime/size skipping is unaffected, and
+        # a subagent that announced its own resources is never re-emitted.
+        #
+        # Idempotency (N1): resumed sessions fire SessionEnd repeatedly, so
+        # each backfill records a "backfilled" marker (the sorted session
+        # resource list used) in the agent's cursor entry. A backfill is
+        # re-emitted ONLY when (a) the agent's task record was itself
+        # re-emitted this run — a fresh empty-resources record superseded the
+        # old backfill and must be re-enriched (the marker is also dropped by
+        # the cursor rewrite in _maybe_harvest_file, covering re-emits at
+        # SubagentStop time); (b) no marker exists yet; or (c) the session's
+        # resource list changed since the marker was written. Otherwise the
+        # run appends nothing — no byte-identical duplicates.
         if event == "SessionEnd" and subdir.is_dir():
             session_resources = _session_resources(
                 session_rec, transcript, event, session_id)
             if session_resources:
+                marker = sorted(session_resources)
                 for agent_file in sorted(subdir.glob("agent-*.jsonl")):
+                    key = str(pathlib.Path(agent_file).resolve())
+                    prev = cursor.get(key) or {}
+                    if (key not in reemitted_tasks
+                            and prev.get("backfilled") == marker):
+                        continue   # already backfilled with this exact list
                     task_rec = build_record(agent_file, event, "task")
                     if task_rec["resources_deployed"]:
                         continue   # announced its own — keep it, do not re-emit
@@ -529,6 +550,7 @@ def harvest(transcript, event, metrics_dir, session_id=None):
                     task_rec["resources_source"] = "session-backfill"
                     _append_record(metrics_dir, task_rec)
                     emitted.append(task_rec)
+                    cursor.setdefault(key, {})["backfilled"] = marker
 
     _save_cursor(metrics_dir, cursor)
     return emitted

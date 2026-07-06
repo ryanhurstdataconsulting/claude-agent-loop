@@ -429,6 +429,81 @@ class TestSessionRollup(HarvestFixture):
         self.assertEqual(bbb[-1]["resources_source"], "session-backfill")
         self.assertEqual(bbb[-1]["resources_deployed"], ["token-efficiency"])
 
+    def test_repeated_session_end_backfills_once(self):
+        # N1: resumed sessions fire SessionEnd repeatedly. Three consecutive
+        # SessionEnd harvests of an UNCHANGED session must emit exactly ONE
+        # backfill record total — the shard must not grow on runs 2 and 3.
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        count_after_first = len(all_records(self.metrics))
+        second = hm.harvest(str(self.session_file), "SessionEnd",
+                            str(self.metrics))
+        third = hm.harvest(str(self.session_file), "SessionEnd",
+                           str(self.metrics))
+        self.assertEqual(second, [])
+        self.assertEqual(third, [])
+        recs = all_records(self.metrics)
+        self.assertEqual(len(recs), count_after_first)   # shard stable
+        backfills = [r for r in recs
+                     if r.get("resources_source") == "session-backfill"]
+        self.assertEqual(len(backfills), 1)
+
+    def test_backfill_self_heals_after_task_reemit(self):
+        # N1 case (a): after a backfill, the subagent transcript grows and a
+        # post-backfill SubagentStop re-emits a fresh empty-resources task
+        # record that supersedes the backfill (last-wins). The next SessionEnd
+        # must emit a NEW backfill so the task's LAST record is enriched again.
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        extra = {"type": "assistant", "sessionId": SID, "gitBranch": "main",
+                 "timestamp": "2026-07-02T10:00:04.000Z",
+                 "message": {"role": "assistant", "model": "claude-sonnet-4",
+                             "id": "n2",
+                             "usage": {"input_tokens": 5, "output_tokens": 5,
+                                       "cache_read_input_tokens": 0,
+                                       "cache_creation_input_tokens": 0},
+                             "content": [{"type": "text",
+                                          "text": "more work"}]}}
+        with open(self.bbb, "a") as f:
+            f.write(json.dumps(extra) + "\n")
+        hm.harvest(str(self.bbb), "SubagentStop", str(self.metrics))
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        bbb = [r for r in all_records(self.metrics)
+               if r["task_id"] == "agent-bbb"]
+        backfills = [r for r in bbb
+                     if r["resources_source"] == "session-backfill"]
+        self.assertEqual(len(backfills), 2)   # a NEW backfill was emitted
+        self.assertEqual(bbb[-1]["resources_source"], "session-backfill")
+        self.assertEqual(bbb[-1]["resources_deployed"], ["token-efficiency"])
+
+    def test_backfill_reemitted_when_session_resources_change(self):
+        # N1 case (c): the session's resource list changes between SessionEnds
+        # (parse_announce is first-match-wins, so the change must edit the
+        # announce line itself — an appended second announce is ignored by
+        # design). A new backfill with the NEW list must be emitted once, and
+        # a further unchanged SessionEnd must emit nothing.
+        import copy
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        recs = copy.deepcopy(SESSION_RECS)
+        for r in recs:
+            if r.get("type") != "assistant":
+                continue
+            for block in r["message"].get("content", []):
+                if (isinstance(block, dict) and block.get("type") == "text"
+                        and "deploying" in block.get("text", "")):
+                    block["text"] = ("Resource Loop — deploying: "
+                                     "token-efficiency (skill), extra-skill "
+                                     "(skill) — broader work")
+        write_jsonl(self.session_file, recs)
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        bbb = [r for r in all_records(self.metrics)
+               if r["task_id"] == "agent-bbb"]
+        backfills = [r for r in bbb
+                     if r["resources_source"] == "session-backfill"]
+        self.assertEqual(len(backfills), 2)   # one per distinct resource list
+        self.assertEqual(bbb[-1]["resources_source"], "session-backfill")
+        self.assertEqual(bbb[-1]["resources_deployed"],
+                         ["token-efficiency", "extra-skill"])
+
     def test_session_with_no_announce_emits_no_backfill(self):
         # A session whose main thread never announced has no resources to
         # backfill, so NO session-backfill records are emitted even though
