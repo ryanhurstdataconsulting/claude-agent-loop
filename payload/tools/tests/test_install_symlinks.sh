@@ -290,7 +290,7 @@ echo "== Scenario 9: malformed MANIFEST line is skipped, not fatal =="
 SCRATCH_REPO="$SANDBOX_ROOT/repo-malformed"
 rm -rf "$SCRATCH_REPO"
 mkdir -p "$SCRATCH_REPO"
-cp -R "$REPO/install.sh" "$REPO/VERSION" "$REPO/payload" "$SCRATCH_REPO/"
+cp -R "$REPO/install.sh" "$REPO/uninstall.sh" "$REPO/VERSION" "$REPO/payload" "$SCRATCH_REPO/"
 printf '\nlink-dir\n' >> "$SCRATCH_REPO/payload/MANIFEST"
 H="$(new_home malformed)"
 C="$H/.claude"
@@ -302,6 +302,21 @@ printf '%s\n' "$OUT" | grep -qF "MANIFEST: 'link-dir' missing path" \
   && pass "later step ran: .installed-version written" || fail "later step did not run: .installed-version missing"
 grep -qF 'BEGIN AGENT-LOOP' "$C/CLAUDE.md" 2>/dev/null \
   && pass "later step ran: CLAUDE.md sentinel present" || fail "later step did not run: CLAUDE.md sentinel missing"
+
+# P1-m2: the uninstall side of the arity guard. Run the SAME scratch repo's
+# uninstall.sh against the SAME corrupted MANIFEST and sandbox HOME. Like
+# install.sh, uninstall.sh must survive the malformed `link-dir` line (warn,
+# not abort under `set -u`) and still remove every repo-resolving symlink.
+UOUT="$(env HOME="$H" PATH=/usr/bin:/bin bash "$SCRATCH_REPO/uninstall.sh" </dev/null 2>&1)"; urc=$?
+[ "$urc" -eq 0 ] \
+  && pass "uninstall exits 0 despite malformed MANIFEST line" || fail "uninstall aborted (exit $urc) on malformed MANIFEST line"
+printf '%s\n' "$UOUT" | grep -qF "MANIFEST: 'link-dir' missing path" \
+  && pass "uninstall warns about the malformed line" || fail "uninstall printed no warning for the malformed MANIFEST line"
+mal_un_fail=0
+for rel in $(manifest_links); do
+  [ -L "$C/$rel" ] && { fail "uninstall left a symlink behind: $rel"; mal_un_fail=1; }
+done
+[ "$mal_un_fail" -eq 0 ] && pass "uninstall removed all repo symlinks despite malformed MANIFEST"
 
 # ===========================================================================
 echo "== Scenario 10: --restore-backups with no backup present warns and strips in place =="

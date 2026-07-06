@@ -160,6 +160,57 @@ task at hand.
 
 ---
 
+## Metrics store contract
+
+The Resource Loop records one JSON object per line to a monthly shard at
+`~/.claude/metrics/YYYY-MM.jsonl` (`schema: 1`). The harvester
+(`payload/tools/harvest_metrics.py`) and the PreCompact hook are the only
+writers; everything downstream is a reader.
+
+| Field | Meaning |
+|---|---|
+| `kind` | `task` · `session` · `score` · `learn` · `compaction` |
+| `task_id` | the join key: `agent-<id>` for a task, `session-<sid>` for a session |
+| `resources_source` | how `resources_deployed` was attributed (see below) |
+
+**Kinds.** A `task` record rolls up one subagent transcript; a `session`
+record rolls up the main thread and carries `tasks_harvested`; a `compaction`
+record is one line per PreCompact event; `score` and `learn` records (P3 / P6)
+attach a subjective self-score and a heuristic action to an existing task.
+
+**Join.** Records are correlated by `task_id`. A `score` or `learn` record
+shares the `task_id` of the task it annotates, so a consumer joins them on that
+key.
+
+**Last-wins (the append-only rule).** Records are keyed by `(task_id, kind)`
+and are **only ever appended** — a record is never rewritten in place. When a
+transcript grows, or when the SessionEnd backfill enriches a task, a fresh
+REPLACEMENT record is appended after the stale one. **Consumers MUST take the
+LAST record per `(task_id, kind)`** and ignore every earlier copy. This keeps
+each write a single atomic append and preserves the full history.
+
+**`resources_source`.** Every task and session record states where its
+`resources_deployed` list came from:
+
+- `task` — parsed from the subagent's own ANNOUNCE line;
+- `session` — parsed from the main thread's ANNOUNCE (session records);
+- `session-backfill` — copied from the session's ANNOUNCE onto a subagent that
+  never announced. Subagents rarely announce, so most task records are enriched
+  this way: at SessionEnd, once the session's `resources_deployed` is known, the
+  harvester re-emits a replacement task record (last-wins) for every subagent
+  whose own announce was empty. A subagent that announced its own resources
+  keeps them and is left untouched.
+
+**Not publishable — local-only by design.** Metrics records embed project
+slugs and git branch names that identify client work, and `redact()` scrubs
+credentials only — not those identifiers. The `metrics/` directory is untracked
+for exactly this reason. A metrics record MUST NOT be copied into any tracked or
+publishable file without first passing the P5 visibility classifier
+(`classify_visibility.py`); default-deny routes anything CLIENT or UNSURE back
+to local-only files.
+
+---
+
 ## Model-routing table
 
 The ROUTE step dispatches subagents at the tier that fits the work:

@@ -37,8 +37,15 @@ try:
     os.makedirs(metrics_dir, exist_ok=True)
     shard = os.path.join(metrics_dir, now.strftime("%Y-%m") + ".jsonl")
     line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
-    with open(shard, "a") as f:   # single append — atomic under PIPE_BUF
-        f.write(line)
+    # One os.write(2) of the whole line to an O_APPEND fd. A single write to an
+    # O_APPEND regular file on a local filesystem does not interleave with other
+    # single-write appenders, so concurrent hooks never tear a record. (PIPE_BUF
+    # governs atomic writes to pipes, not this property of regular files.)
+    fd = os.open(shard, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, line.encode("utf-8"))
+    finally:
+        os.close(fd)
 except Exception as exc:
     sys.stderr.write("precompact-event: %s\n" % exc)
 

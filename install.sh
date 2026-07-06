@@ -231,7 +231,7 @@ else
     say ""
     say "   A real file/dir already exists at each path above, so the framework"
     say "   version was NOT linked there and is NOT active. Move or remove the"
-    say "   local file/dir, then re-run install.sh, to bring the framework"
+    say "   local file/dir, then re-run install.sh to bring the framework"
     say "   version into effect."
   fi
 fi

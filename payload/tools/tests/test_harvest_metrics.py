@@ -237,7 +237,10 @@ class TestTaskRecord(HarvestFixture):
         self.assertEqual(rec["ts_start"], "2026-06-11T02:00:00.000Z")
         self.assertEqual(rec["ts_end"], "2026-06-11T02:00:09.000Z")
         self.assertEqual(rec["duration_s"], 9.0)
-        self.assertEqual(rec["turns"], 5)   # assistant-record count (incl. synthetic)
+        # turns = distinct assistant message.id (m1 spans two fragments): m1,
+        # m2, m3, m4(synthetic) => 4, not the 5 raw assistant records.
+        self.assertEqual(rec["turns"], 4)
+        self.assertEqual(rec["resources_source"], "task")   # announced its own
 
     def test_token_sums_dedup_by_message_id(self):
         rec = self._harvest_aaa()
@@ -357,13 +360,18 @@ class TestSessionRollup(HarvestFixture):
     def test_session_end_rollup_and_catchup(self):
         emitted = hm.harvest(str(self.session_file), "SessionEnd",
                              str(self.metrics))
+        # Two catch-up tasks + one session record + one session-backfill
+        # re-emit for the un-announced agent-bbb (agent-aaa announced its own
+        # resources, so it is NOT backfilled) => four records.
         kinds = sorted(r["kind"] for r in emitted)
-        self.assertEqual(kinds, ["session", "task", "task"])
+        self.assertEqual(kinds, ["session", "task", "task", "task"])
         session = [r for r in emitted if r["kind"] == "session"][0]
         self.assertEqual(session["task_id"], "session-%s" % SID)
         self.assertEqual(session["trigger"], "SessionEnd")
-        self.assertEqual(session["tasks_harvested"], 2)
-        self.assertEqual(session["turns"], 2)
+        self.assertEqual(session["resources_source"], "session")
+        self.assertEqual(session["tasks_harvested"], 2)   # cursor catch-up only
+        # turns = distinct assistant message.id: s1 spans two fragments => 1.
+        self.assertEqual(session["turns"], 1)
         self.assertEqual(session["tools"], {"Bash": 1})
         self.assertEqual(session["tests"],
                          {"detected": True, "passed": 5, "failed": 0})
@@ -372,9 +380,10 @@ class TestSessionRollup(HarvestFixture):
                          {"in": 50, "out": 20, "cache_read": 0,
                           "cache_creation": 0})
         self.assertEqual(session["ts_end"], "2026-06-11T02:00:02.000Z")
-        # The two subagent tasks were harvested as kind:"task".
+        # The two subagent tasks were harvested as kind:"task"; agent-bbb also
+        # gets a backfill re-emit, so it appears twice.
         task_ids = sorted(r["task_id"] for r in emitted if r["kind"] == "task")
-        self.assertEqual(task_ids, ["agent-aaa", "agent-bbb"])
+        self.assertEqual(task_ids, ["agent-aaa", "agent-bbb", "agent-bbb"])
 
     def test_catchup_skips_already_cursored_subagents(self):
         # Harvest agent-aaa first (as if at its own SubagentStop).
@@ -382,10 +391,64 @@ class TestSessionRollup(HarvestFixture):
         emitted = hm.harvest(str(self.session_file), "SessionEnd",
                              str(self.metrics))
         session = [r for r in emitted if r["kind"] == "session"][0]
-        # Only agent-bbb is un-cursored now => 1 catch-up task.
+        # Only agent-bbb is un-cursored now => 1 catch-up task. tasks_harvested
+        # counts cursor catch-up only, never the backfill re-emit.
         self.assertEqual(session["tasks_harvested"], 1)
-        harvested_tasks = [r["task_id"] for r in emitted if r["kind"] == "task"]
-        self.assertEqual(harvested_tasks, ["agent-bbb"])
+        harvested_tasks = sorted(r["task_id"] for r in emitted
+                                 if r["kind"] == "task")
+        # agent-bbb catch-up task + agent-bbb session-backfill re-emit.
+        self.assertEqual(harvested_tasks, ["agent-bbb", "agent-bbb"])
+
+    def test_session_backfill_enriches_unannounced_tasks(self):
+        # C1: a session that announced (token-efficiency) + two subagents,
+        # one that announced its own resources (agent-aaa) and one that did
+        # not (agent-bbb, a bare announce => empty). SessionEnd must backfill
+        # only the un-announced task, via a last-wins replacement record.
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        recs = all_records(self.metrics)
+
+        session = [r for r in recs if r["kind"] == "session"][0]
+        self.assertEqual(session["resources_deployed"], ["token-efficiency"])
+        self.assertEqual(session["resources_source"], "session")
+
+        # agent-aaa announced its own resources => one record, source "task",
+        # NOT backfilled (no unchanged-duplicate re-emit).
+        aaa = [r for r in recs if r["task_id"] == "agent-aaa"]
+        self.assertEqual(len(aaa), 1)
+        self.assertEqual(aaa[-1]["resources_source"], "task")
+        self.assertEqual(aaa[-1]["resources_deployed"],
+                         ["sports-analyst", "data-visualization"])
+
+        # agent-bbb announced bare (empty) => two records; its LAST record is
+        # the backfill carrying the session's resources + "session-backfill".
+        bbb = [r for r in recs if r["task_id"] == "agent-bbb"]
+        self.assertEqual(len(bbb), 2)
+        self.assertEqual(bbb[0]["resources_source"], "task")
+        self.assertEqual(bbb[0]["resources_deployed"], [])
+        self.assertEqual(bbb[-1]["kind"], "task")
+        self.assertEqual(bbb[-1]["resources_source"], "session-backfill")
+        self.assertEqual(bbb[-1]["resources_deployed"], ["token-efficiency"])
+
+    def test_session_with_no_announce_emits_no_backfill(self):
+        # A session whose main thread never announced has no resources to
+        # backfill, so NO session-backfill records are emitted even though
+        # agent-bbb is un-announced.
+        import copy
+        recs = copy.deepcopy(SESSION_RECS)
+        for r in recs:
+            if r.get("type") == "assistant":
+                for block in r["message"].get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        block["text"] = "working on it"
+        write_jsonl(self.session_file, recs)
+
+        emitted = hm.harvest(str(self.session_file), "SessionEnd",
+                             str(self.metrics))
+        session = [r for r in emitted if r["kind"] == "session"][0]
+        self.assertEqual(session["resources_deployed"], [])
+        backfills = [r for r in all_records(self.metrics)
+                     if r.get("resources_source") == "session-backfill"]
+        self.assertEqual(backfills, [])
 
 
 class TestCliAndErrors(HarvestFixture):
@@ -474,8 +537,49 @@ class TestParsingUnits(unittest.TestCase):
         p, f, d = hm.parse_tests("Test Files  1 failed | 3 passed (4)")
         self.assertEqual((p, f, d), (3, 1, True))
 
+    def test_parse_tests_two_frameworks_summed(self):
+        # I2: pytest + vitest summaries in one result must both be counted —
+        # per-framework last match, then summed: 34+3 passed, 2+1 failed.
+        p, f, d = hm.parse_tests(
+            "34 passed, 2 failed\nTest Files  1 failed | 3 passed (4)")
+        self.assertEqual((p, f, d), (37, 3, True))
+
     def test_parse_tests_none(self):
         self.assertEqual(hm.parse_tests("no test output here"), (0, 0, False))
+
+    def test_turns_dedupe_fragmented_assistant_messages(self):
+        # I1: three assistant records, two distinct message.id values — one
+        # streamed turn split across two fragments (id "x") plus a second turn
+        # (id "y"). turns must dedupe to 2, matching the token dedup identity.
+        recs = [
+            {"type": "assistant", "sessionId": "s",
+             "timestamp": "2026-06-01T00:00:00.000Z",
+             "message": {"role": "assistant", "model": "claude-opus-4-8",
+                         "id": "x",
+                         "usage": {"input_tokens": 1, "output_tokens": 1,
+                                   "cache_read_input_tokens": 0,
+                                   "cache_creation_input_tokens": 0},
+                         "content": [{"type": "text", "text": "part one"}]}},
+            {"type": "assistant", "sessionId": "s",
+             "timestamp": "2026-06-01T00:00:01.000Z",
+             "message": {"role": "assistant", "model": "claude-opus-4-8",
+                         "id": "x",
+                         "usage": {"input_tokens": 1, "output_tokens": 2,
+                                   "cache_read_input_tokens": 0,
+                                   "cache_creation_input_tokens": 0},
+                         "content": [{"type": "tool_use", "name": "Read",
+                                      "id": "t", "input": {}}]}},
+            {"type": "assistant", "sessionId": "s",
+             "timestamp": "2026-06-01T00:00:02.000Z",
+             "message": {"role": "assistant", "model": "claude-opus-4-8",
+                         "id": "y",
+                         "usage": {"input_tokens": 1, "output_tokens": 1,
+                                   "cache_read_input_tokens": 0,
+                                   "cache_creation_input_tokens": 0},
+                         "content": [{"type": "text", "text": "second"}]}},
+        ]
+        agg = hm._aggregate(recs)
+        self.assertEqual(agg["turns"], 2)
 
 
 if __name__ == "__main__":

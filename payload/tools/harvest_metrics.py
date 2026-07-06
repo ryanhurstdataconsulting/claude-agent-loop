@@ -31,9 +31,18 @@ records that share one ``message.id`` and repeat identical (often partial)
 token and web-tool sums are deduplicated by ``message.id`` — the final fragment
 seen for an id wins (it carries the complete totals and ``server_tool_use``).
 Content blocks (text / tool_use / tool_result) are NOT duplicated across
-fragments, so they are counted per block. ``turns`` is the literal count of
-assistant-type records (per the P2 spec), which may exceed the number of
-distinct assistant messages when streaming splits a turn.
+fragments, so they are counted per block. ``turns`` is the count of DISTINCT
+assistant ``message.id`` values — the same dedup identity as tokens — so a
+streamed turn split across several fragments counts once, not once per fragment.
+
+Resource attribution
+--------------------
+Every record carries ``resources_source``: ``"task"`` for a task record parsed
+from its own subagent transcript, ``"session"`` for a session rollup, and
+``"session-backfill"`` for a replacement task record whose ``resources_deployed``
+was copied from the session's ANNOUNCE because the subagent itself never
+announced (see :func:`harvest`). Consumers take the LAST record per
+``(task_id, kind)``, so a backfill re-emit supersedes the empty original.
 """
 import argparse
 import collections
@@ -62,6 +71,10 @@ _PAREN = re.compile(r"\([^)]*\)")                    # "(category)" to strip
 # and generic "N passed / N failed" all match these.
 PASSED_RE = re.compile(r"(\d+)\s+passed")
 FAILED_RE = re.compile(r"(\d+)\s+failed")
+# vitest prints a parenthesized total after the pass count ("3 passed (4)"),
+# which pytest never does — this shape identifies a vitest summary line so the
+# two frameworks can be summed rather than one clobbering the other.
+VITEST_PASSED_RE = re.compile(r"(\d+)\s+passed\s+\(\d+\)")
 
 
 def _redact(text):
@@ -74,16 +87,45 @@ def _redact(text):
 def parse_tests(text):
     """Return (passed, failed, detected) for one tool-result text.
 
-    The LAST ``N passed`` / ``N failed`` in the text wins (re-runs supersede
-    earlier output); a result reporting both counts contributes both.
+    Two framework summary shapes are recognized independently and SUMMED, so a
+    combined pytest+vitest run never drops a framework:
+
+    * **vitest** — a ``N passed (M)`` line (its parenthesized total is the
+      tell), with an optional ``… | K failed`` on the same line;
+    * **pytest / generic** — a ``N passed[, K failed]`` line.
+
+    Within a single framework the LAST value wins (a re-run supersedes earlier
+    output, and multiple counts on one pytest line take the last), matching the
+    pre-fix single-framework behavior.
+
+    NOTE (accepted, M1): these are substring greps, so prose that literally
+    reads "12 passed" would register as a test result. The false-positive rate
+    is bounded — the phrasing is idiomatic to test runners — and the signal is
+    corroborated by the Bash tool context, so it is left as-is.
     """
     if not text:
         return (0, 0, False)
-    passed_all = PASSED_RE.findall(text)
-    failed_all = FAILED_RE.findall(text)
-    passed = int(passed_all[-1]) if passed_all else 0
-    failed = int(failed_all[-1]) if failed_all else 0
-    detected = bool(passed_all or failed_all)
+    vit_passed = vit_failed = None
+    py_passed = py_failed = None
+    detected = False
+    for line in text.splitlines():
+        vm = VITEST_PASSED_RE.search(line)
+        if vm:
+            vit_passed = int(vm.group(1))
+            vf = FAILED_RE.findall(line)
+            vit_failed = int(vf[-1]) if vf else 0
+            detected = True
+            continue   # a vitest line is not also counted as pytest
+        p = PASSED_RE.findall(line)
+        f = FAILED_RE.findall(line)
+        if p:
+            py_passed = int(p[-1])
+        if f:
+            py_failed = int(f[-1])
+        if p or f:
+            detected = True
+    passed = (vit_passed or 0) + (py_passed or 0)
+    failed = (vit_failed or 0) + (py_failed or 0)
     return (passed, failed, detected)
 
 
@@ -103,6 +145,10 @@ def parse_announce(texts):
     """Scan assistant texts in order; parse the FIRST Resource Loop line.
 
     Returns (resources_deployed, announce_found, bare).
+
+    NOTE (accepted, M6): each text block is scanned line by line, assuming the
+    ANNOUNCE occupies a single line. The injected grammar always emits it as
+    one line, so a hypothetical wrapped announce is out of contract, not a bug.
     """
     for text in texts:
         if not text:
@@ -166,7 +212,7 @@ def _content_blocks(message):
 def _aggregate(records):
     """Fold a record list into the numeric aggregates for one transcript."""
     by_msg = {}                       # message.id -> (model, usage)  last-wins
-    turns = 0
+    assistant_ids = set()             # distinct message.id -> turns (dedup)
     tools = collections.Counter()
     total_tool_calls = 0
     tool_errors = 0
@@ -193,8 +239,11 @@ def _aggregate(records):
         message = rec.get("message") if isinstance(rec.get("message"), dict) else {}
 
         if rtype == "assistant":
-            turns += 1
+            # NOTE (accepted, M3): the uuid / id(rec) fallback is unreachable
+            # with real transcripts (every assistant record carries message.id);
+            # it only guards a malformed fixture from collapsing all ids to one.
             mid = message.get("id") or rec.get("uuid") or id(rec)
+            assistant_ids.add(mid)   # turns = distinct assistant message.id
             usage = message.get("usage")
             model = message.get("model")
             if isinstance(usage, dict) and model != "<synthetic>":
@@ -268,7 +317,7 @@ def _aggregate(records):
 
     return {
         "models": models,
-        "turns": turns,
+        "turns": len(assistant_ids),
         "tools": dict(tools),
         "tool_errors": tool_errors,
         "error_rate": error_rate,
@@ -330,6 +379,10 @@ def build_record(path, event, kind, session_id=None, extra=None):
         "web": agg["web"],
         "compactions": 0,   # PreCompact events land as separate lines, not here
         "resources_deployed": agg["resources_deployed"],
+        # Where resources_deployed came from: a task parsed from its own
+        # transcript is "task"; a session rollup is "session"; the SessionEnd
+        # backfill re-emit overwrites this with "session-backfill" (see harvest).
+        "resources_source": "session" if kind == "session" else "task",
         "announce_found": agg["announce_found"],
         "bare": agg["bare"],
     }
@@ -363,9 +416,16 @@ def _append_record(metrics_dir, record):
     shard = pathlib.Path(metrics_dir) / ("%s.jsonl" % _month_shard(record["ts_end"]))
     shard.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
-    # Single append write — atomic under PIPE_BUF for a one-line record.
-    with open(shard, "a") as f:
-        f.write(line)
+    data = line.encode("utf-8")
+    # One os.write(2) of the whole line to an O_APPEND fd. A single write to an
+    # O_APPEND regular file on a local filesystem does not interleave with other
+    # single-write appenders, so concurrent hooks never tear a record. (PIPE_BUF
+    # governs atomic writes to pipes, not this property of regular files.)
+    fd = os.open(str(shard), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
 
 
 def _maybe_harvest_file(path, event, kind, metrics_dir, cursor,
@@ -397,6 +457,19 @@ def _subagents_dir(session_file):
     return pathlib.Path(base) / "subagents"
 
 
+def _session_resources(session_rec, transcript, event, session_id):
+    """The session's ``resources_deployed``, even if the cursor skipped it.
+
+    On SessionEnd the session record is usually emitted (the file just grew),
+    but if the cursor already covered it (unchanged) we still need its ANNOUNCE
+    to backfill subagents, so fall back to a fresh (side-effect-free) parse.
+    """
+    if session_rec is not None:
+        return session_rec["resources_deployed"]
+    return build_record(transcript, event, "session",
+                        session_id=session_id)["resources_deployed"]
+
+
 def harvest(transcript, event, metrics_dir, session_id=None):
     """Harvest a transcript, updating the shard(s) and the cursor.
 
@@ -421,20 +494,41 @@ def harvest(transcript, event, metrics_dir, session_id=None):
             emitted.append(rec)
     else:
         tasks_harvested = 0
-        if event == "SessionEnd":
-            subdir = _subagents_dir(transcript)
-            if subdir.is_dir():
+        subdir = _subagents_dir(transcript)
+        if event == "SessionEnd" and subdir.is_dir():
+            for agent_file in sorted(subdir.glob("agent-*.jsonl")):
+                rec = _maybe_harvest_file(agent_file, event, "task",
+                                          metrics_dir, cursor)
+                if rec:
+                    emitted.append(rec)
+                    tasks_harvested += 1
+        session_rec = _maybe_harvest_file(
+            transcript, event, "session", metrics_dir, cursor,
+            session_id=session_id, extra={"tasks_harvested": tasks_harvested})
+        if session_rec:
+            emitted.append(session_rec)
+
+        # C1 — session-backfill of task resources. Subagents rarely announce,
+        # so their task records usually carry resources_deployed=[] while the
+        # main-thread session record holds the real deploy list. Once the
+        # session's resources_deployed is known and non-empty, re-emit a
+        # REPLACEMENT task record (last-wins) for every subagent whose OWN
+        # announce was empty, tagged resources_source="session-backfill". This
+        # is a re-emit, NOT a re-cursor: the cursor is left untouched (so
+        # SubagentStop-time skipping is unaffected), and a subagent that
+        # announced its own resources is skipped (no unchanged-duplicate).
+        if event == "SessionEnd" and subdir.is_dir():
+            session_resources = _session_resources(
+                session_rec, transcript, event, session_id)
+            if session_resources:
                 for agent_file in sorted(subdir.glob("agent-*.jsonl")):
-                    rec = _maybe_harvest_file(agent_file, event, "task",
-                                              metrics_dir, cursor)
-                    if rec:
-                        emitted.append(rec)
-                        tasks_harvested += 1
-        rec = _maybe_harvest_file(transcript, event, "session", metrics_dir,
-                                  cursor, session_id=session_id,
-                                  extra={"tasks_harvested": tasks_harvested})
-        if rec:
-            emitted.append(rec)
+                    task_rec = build_record(agent_file, event, "task")
+                    if task_rec["resources_deployed"]:
+                        continue   # announced its own — keep it, do not re-emit
+                    task_rec["resources_deployed"] = list(session_resources)
+                    task_rec["resources_source"] = "session-backfill"
+                    _append_record(metrics_dir, task_rec)
+                    emitted.append(task_rec)
 
     _save_cursor(metrics_dir, cursor)
     return emitted

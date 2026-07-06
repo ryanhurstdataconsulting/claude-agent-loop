@@ -64,6 +64,12 @@ if not transcript:
 # Resolve the transcript to harvest. If SubagentStop points at a main session
 # file (not an agent-*.jsonl), pick the newest agent-*.jsonl beside it; the
 # cursor keeps already-harvested subagents from being re-emitted.
+#
+# NOTE (accepted, M4): under parallel subagents finishing near-simultaneously,
+# "newest by mtime" can transiently mis-attribute one SubagentStop to the wrong
+# agent file. This self-corrects at SessionEnd, where the cursor catch-up
+# harvests every un-cursored subagent and the session-backfill re-attributes
+# resources — so the terminal record set is correct regardless of the race.
 resolved = transcript
 base = os.path.basename(transcript)
 if (not base.startswith("agent-")
