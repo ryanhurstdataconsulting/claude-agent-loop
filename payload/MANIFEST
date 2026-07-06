@@ -50,9 +50,11 @@ link-file tools/env_tooling_preflight.py
 link-file tools/git_safety_preflight.py
 link-file tools/harvest_metrics.py
 link-file tools/lint_registry.py
+link-file tools/lint_scales.py
 link-file tools/prose_grammar.py
 link-file tools/prose_grammar_gate.py
 link-file tools/run_canaries.sh
+link-file tools/score_task.py
 link-file tools/secret_pii_scrub_gate.py
 link-file tools/ssh_tunnel_keepalive.sh
 link-dir tools/templates
