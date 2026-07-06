@@ -189,8 +189,49 @@ C="$H/.claude"
 run_install "$H" >/dev/null
 printf 'diverged-marker\n' >> "$C/learning/SCALES.md"
 mkdir -p "$C/metrics/state"; printf '{}\n' > "$C/metrics/state/harvest.cursor.json"
+
+# Pre-condition: install merged all four of our hook groups across events.
+for cmd in \
+  "$C/hooks/inject-resource-loop.sh" \
+  "$C/hooks/harvest-metrics.sh" \
+  "$C/hooks/precompact-event.sh"; do
+  grep -qF "$cmd" "$C/settings.json" 2>/dev/null \
+    && pass "installed hook command present: $(basename "$cmd")" \
+    || fail "install did not merge hook command: $cmd"
+done
+# harvest-metrics.sh is wired under BOTH SubagentStop and SessionEnd.
+[ "$(grep -cF "$C/hooks/harvest-metrics.sh" "$C/settings.json" 2>/dev/null)" = "2" ] \
+  && pass "harvest hook merged under two events (SubagentStop + SessionEnd)" \
+  || fail "harvest hook not merged under both events"
+
+# Plant a FOREIGN hook group that uninstall must preserve: a new event plus a
+# second command riding alongside ours in an event we own.
+FOREIGN="/opt/vendor/foreign-hook.sh"
+python3 - "$C/settings.json" "$FOREIGN" <<'PY'
+import json, sys
+path, foreign = sys.argv[1], sys.argv[2]
+s = json.load(open(path))
+s.setdefault("hooks", {})
+s["hooks"]["Notification"] = [{"hooks": [{"type": "command", "command": foreign}]}]
+s["hooks"].setdefault("SubagentStop", []).append(
+    {"hooks": [{"type": "command", "command": foreign}]})
+json.dump(s, open(path, "w"), indent=2)
+PY
+
 run_uninstall "$H" >/dev/null; urc=$?
 [ "$urc" -eq 0 ] && pass "uninstall exits 0" || fail "uninstall exit $urc"
+
+# All four of our hook groups are gone; the foreign hook and its event survive.
+for cmd in \
+  "$C/hooks/inject-resource-loop.sh" \
+  "$C/hooks/harvest-metrics.sh" \
+  "$C/hooks/precompact-event.sh"; do
+  grep -qF "$cmd" "$C/settings.json" 2>/dev/null \
+    && fail "our hook left behind after uninstall: $(basename "$cmd")" \
+    || pass "our hook removed across all events: $(basename "$cmd")"
+done
+grep -qF "$FOREIGN" "$C/settings.json" 2>/dev/null \
+  && pass "foreign hook preserved by uninstall" || fail "foreign hook wrongly removed"
 
 link_count="$(manifest_links | wc -l | tr -d ' ')"
 [ "$link_count" -gt 0 ] 2>/dev/null && pass "manifest_links yields >0 entries (assertions below aren't vacuous)" \

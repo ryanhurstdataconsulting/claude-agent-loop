@@ -320,36 +320,43 @@ if not isinstance(settings, dict):
 
 changed = []
 
-# --- SessionStart hook: add our group only if its command is not already there
-frag_ss = frag.get("hooks", {}).get("SessionStart", [])
-settings.setdefault("hooks", {})
-if not isinstance(settings["hooks"], dict):
-    settings["hooks"] = {}
-ss = settings["hooks"].setdefault("SessionStart", [])
-if not isinstance(ss, list):
-    ss = []
-    settings["hooks"]["SessionStart"] = ss
+# --- hooks: merge every event group from the fragment (SessionStart plus the
+#     metrics events SubagentStop / SessionEnd / PreCompact). A group is added
+#     only if its command is not already present (per-command dedup), so re-runs
+#     never duplicate and any foreign group/event you already have is untouched.
+frag_hooks = frag.get("hooks", {})
+if isinstance(frag_hooks, dict) and frag_hooks:
+    settings.setdefault("hooks", {})
+    if not isinstance(settings["hooks"], dict):
+        settings["hooks"] = {}
+    for event, frag_groups in frag_hooks.items():
+        if not isinstance(frag_groups, list):
+            continue
+        dest = settings["hooks"].setdefault(event, [])
+        if not isinstance(dest, list):
+            dest = []
+            settings["hooks"][event] = dest
 
-existing_cmds = set()
-for group in ss:
-    if isinstance(group, dict):
-        for h in group.get("hooks", []):
-            if isinstance(h, dict) and "command" in h:
-                existing_cmds.add(h["command"])
+        existing_cmds = set()
+        for group in dest:
+            if isinstance(group, dict):
+                for h in group.get("hooks", []):
+                    if isinstance(h, dict) and "command" in h:
+                        existing_cmds.add(h["command"])
 
-for group in frag_ss:
-    g = json.loads(json.dumps(group))  # deep copy
-    cmds = []
-    for h in g.get("hooks", []):
-        if isinstance(h, dict) and "command" in h:
-            h["command"] = h["command"].replace("$HOME", real_home)
-            cmds.append(h["command"])
-    if not any(c in existing_cmds for c in cmds):
-        ss.append(g)
-        existing_cmds.update(cmds)
-        changed.append("added SessionStart hook")
-    else:
-        changed.append("SessionStart hook already present")
+        for group in frag_groups:
+            g = json.loads(json.dumps(group))  # deep copy
+            cmds = []
+            for h in g.get("hooks", []):
+                if isinstance(h, dict) and "command" in h:
+                    h["command"] = h["command"].replace("$HOME", real_home)
+                    cmds.append(h["command"])
+            if not any(c in existing_cmds for c in cmds):
+                dest.append(g)
+                existing_cmds.update(cmds)
+                changed.append("added %s hook" % event)
+            else:
+                changed.append("%s hook already present" % event)
 
 # --- enabledPlugins: ours are required, so force them enabled; keep yours
 ep = settings.setdefault("enabledPlugins", {})

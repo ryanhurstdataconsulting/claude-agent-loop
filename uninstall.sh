@@ -6,8 +6,9 @@
 #   - the framework symlinks under ~/.claude/ that resolve back into THIS repo
 #     (MANIFEST link-dir / link-file entries)
 #   - the AGENT-LOOP sentinel block appended to ~/.claude/CLAUDE.md
-#   - our SessionStart hook group in ~/.claude/settings.json (matched by the
-#     exact command install.sh writes — the same dedup key)
+#   - our hook groups in ~/.claude/settings.json across every event we install
+#     (SessionStart inject + SubagentStop/SessionEnd/PreCompact metrics hooks),
+#     matched by the exact commands install.sh writes — the same dedup keys
 #
 # It NEVER removes real files/dirs you placed at a framework path, NEVER removes
 # copy-if-absent outputs (the learning/ and registry/ seeds — your learned
@@ -167,7 +168,7 @@ PY
 fi
 
 # ---------------------------------------------------------------------------
-step "Step 3 — settings.json (SessionStart hook group)"
+step "Step 3 — settings.json (our hook groups across all events)"
 
 SETTINGS="$CLAUDE_DIR/settings.json"
 SETTINGS_BAK="$SETTINGS.bak-agentloop"
@@ -191,7 +192,14 @@ else
 import json, os, sys
 
 settings_path, real_home = sys.argv[1], sys.argv[2]
-our_cmd = real_home + "/.claude/hooks/inject-resource-loop.sh"
+# Our hook commands across every event we install (SessionStart inject +
+# the metrics harvest/precompact hooks). Any group whose command is one of
+# these is ours to remove; foreign groups and foreign events are preserved.
+our_cmds = {
+    real_home + "/.claude/hooks/inject-resource-loop.sh",
+    real_home + "/.claude/hooks/harvest-metrics.sh",
+    real_home + "/.claude/hooks/precompact-event.sh",
+}
 
 try:
     with open(settings_path) as f:
@@ -211,27 +219,31 @@ if not isinstance(settings, dict):
 
 hooks = settings.get("hooks")
 removed = 0
-if isinstance(hooks, dict) and isinstance(hooks.get("SessionStart"), list):
-    new_ss = []
-    for group in hooks["SessionStart"]:
-        if not isinstance(group, dict):
-            new_ss.append(group)
+if isinstance(hooks, dict):
+    for event in list(hooks.keys()):
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
             continue
-        entries = group.get("hooks", [])
-        kept = [h for h in entries
-                if not (isinstance(h, dict) and h.get("command") == our_cmd)]
-        if len(kept) != len(entries):
-            removed += len(entries) - len(kept)
-        if kept:
-            group["hooks"] = kept
-            new_ss.append(group)
-        # else: the group held only our hook -> drop the whole group
-    if new_ss:
-        hooks["SessionStart"] = new_ss
-    else:
-        del hooks["SessionStart"]
-        if not hooks:
-            del settings["hooks"]
+        new_groups = []
+        for group in groups:
+            if not isinstance(group, dict):
+                new_groups.append(group)
+                continue
+            entries = group.get("hooks", [])
+            kept = [h for h in entries
+                    if not (isinstance(h, dict) and h.get("command") in our_cmds)]
+            if len(kept) != len(entries):
+                removed += len(entries) - len(kept)
+            if kept:
+                group["hooks"] = kept
+                new_groups.append(group)
+            # else: the group held only our hook(s) -> drop the whole group
+        if new_groups:
+            hooks[event] = new_groups
+        else:
+            del hooks[event]   # event now empty of everything -> drop it
+    if not hooks:
+        del settings["hooks"]
 
 if removed:
     tmp = settings_path + ".hdctmp"
@@ -239,10 +251,10 @@ if removed:
         json.dump(settings, f, indent=2)
         f.write("\n")
     os.replace(tmp, settings_path)
-    print("   [ok] settings: removed our SessionStart hook (%d entr%s), other settings kept"
+    print("   [ok] settings: removed %d of our hook entr%s across events, other settings kept"
           % (removed, "y" if removed == 1 else "ies"))
 else:
-    print("   [ok] settings: our SessionStart hook not present (nothing to remove)")
+    print("   [ok] settings: none of our hooks present (nothing to remove)")
 PY
 fi
 
@@ -254,7 +266,7 @@ say "                  ~/.claude/learning/ (incl. .installed-version) and ~/.cla
 if [ "$RESTORE_BACKUPS" -eq 1 ]; then
   say "   --restore-backups: settings.json and CLAUDE.md rewound to their .bak-agentloop copies where present."
 else
-  say "   The AGENT-LOOP block and our SessionStart hook group were stripped in place."
+  say "   The AGENT-LOOP block and our hook groups (all events) were stripped in place."
 fi
 say ""
 say "Done. Safe to run again — a second run finds nothing left to remove."

@@ -39,6 +39,8 @@ link-file agents/sql-safety-reviewer.md
 
 # --- hooks/ ---------------------------------------------------------------
 link-file hooks/inject-resource-loop.sh
+link-file hooks/harvest-metrics.sh
+link-file hooks/precompact-event.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/build_watch.sh
@@ -46,6 +48,7 @@ link-file tools/check_coverage.sh
 link-file tools/distill_transcripts.py
 link-file tools/env_tooling_preflight.py
 link-file tools/git_safety_preflight.py
+link-file tools/harvest_metrics.py
 link-file tools/lint_registry.py
 link-file tools/prose_grammar.py
 link-file tools/prose_grammar_gate.py
