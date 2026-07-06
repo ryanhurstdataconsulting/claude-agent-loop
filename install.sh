@@ -76,6 +76,15 @@ backup_once() {
 backup_once "$CLAUDE_DIR/settings.json"
 backup_once "$CLAUDE_DIR/CLAUDE.md"
 
+# Counters for the Step 2 summary (and the loud shadowed-entry banner below).
+# Declared at top level — not inside the MANIFEST branch — so they exist even
+# if the MANIFEST is missing, and survive into the final NEXT STEPS message.
+LINKED_COUNT=0
+RELINKED_COUNT=0
+SEEDED_COUNT=0
+SHADOWED_COUNT=0
+SHADOWED_LIST=""
+
 # ---------------------------------------------------------------------------
 step "Step 2 — install framework via MANIFEST (symlinks + seed copies)"
 
@@ -102,10 +111,12 @@ else
       cur="$(readlink "$dest")"
       if [ "$cur" = "$src" ]; then
         ok "link ok: $rel"
+        LINKED_COUNT=$((LINKED_COUNT + 1))
       else
         rm -f "$dest"
         if ln -s "$src" "$dest"; then
           warn "relinked (was -> $cur): $rel"
+          RELINKED_COUNT=$((RELINKED_COUNT + 1))
         else
           warn "relink failed: $rel"
         fi
@@ -113,10 +124,14 @@ else
     elif [ -e "$dest" ]; then
       # A real file/dir the user put here. Never clobber it.
       warn "local override shadows framework: $rel"
+      SHADOWED_COUNT=$((SHADOWED_COUNT + 1))
+      SHADOWED_LIST="${SHADOWED_LIST}${rel}
+"
     else
       mkdir -p "$(dirname "$dest")"
       if ln -s "$src" "$dest"; then
         ok "linked: $rel"
+        LINKED_COUNT=$((LINKED_COUNT + 1))
       else
         warn "link failed: $rel"
       fi
@@ -138,6 +153,7 @@ else
       mkdir -p "$(dirname "$dest")"
       if cp "$src" "$dest"; then
         ok "seeded: $dest_rel"
+        SEEDED_COUNT=$((SEEDED_COUNT + 1))
       else
         warn "seed copy failed: $dest_rel"
       fi
@@ -145,13 +161,28 @@ else
   }
 
   # Walk the MANIFEST. `#` starts a full-line comment; blank lines are ignored.
+  # Every verb branch guards its own arity before touching $2/$3: a malformed
+  # line (a known verb with no path argument) must warn and move on, not
+  # abort the whole run via an unset positional under `set -u`.
   while IFS= read -r rawline || [ -n "$rawline" ]; do
     set -- $rawline
     [ "$#" -eq 0 ] && continue
     case "$1" in
       '#'*)        continue ;;
-      link-dir|link-file) link_entry "$2" ;;
-      copy-if-absent)     copy_seed "$2" "${3:-$2}" ;;
+      link-dir|link-file)
+        if [ "$#" -ge 2 ]; then
+          link_entry "$2"
+        else
+          warn "MANIFEST: '$1' missing path — skipped"
+        fi
+        ;;
+      copy-if-absent)
+        if [ "$#" -ge 2 ]; then
+          copy_seed "$2" "${3:-$2}"
+        else
+          warn "MANIFEST: '$1' missing path — skipped"
+        fi
+        ;;
       *)           warn "MANIFEST: unknown verb '$1' (line ignored)" ;;
     esac
   done < "$MANIFEST"
@@ -172,9 +203,37 @@ else
   fi
 
   # --- make shell entrypoints executable THROUGH the repo (they're symlinks) -
+  # NOTE: $PAYLOAD/hooks and $PAYLOAD/tools live in THIS repo's working tree —
+  # the ~/.claude destinations are symlinks pointing back at them, so chmod
+  # here necessarily touches the repo files themselves, not copies. That is
+  # deliberate: the framework scripts must be +x at their one true location
+  # (the repo), which is what every ~/.claude symlink resolves to.
   find "$PAYLOAD/hooks" -name '*.sh' -exec chmod +x {} \; 2>/dev/null
   find "$PAYLOAD/tools" -name '*.sh' -exec chmod +x {} \; 2>/dev/null
   ok "shell tools under payload/tools/ and payload/hooks/ marked executable"
+
+  # --- Step 2 summary: counts + a loud banner if anything is shadowed -------
+  say ""
+  say "   Step 2 summary — linked: $LINKED_COUNT   relinked: $RELINKED_COUNT   seeded: $SEEDED_COUNT   shadowed: $SHADOWED_COUNT"
+  if [ "$SHADOWED_COUNT" -gt 0 ]; then
+    if [ "$SHADOWED_COUNT" -eq 1 ]; then
+      SHADOWED_HEADLINE="SHADOWED FRAMEWORK ENTRY — 1 path is NOT active"
+    else
+      SHADOWED_HEADLINE="SHADOWED FRAMEWORK ENTRIES — $SHADOWED_COUNT paths are NOT active"
+    fi
+    say ""
+    say "   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    say "   $SHADOWED_HEADLINE"
+    say "   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    printf '%s' "$SHADOWED_LIST" | while IFS= read -r p; do
+      [ -n "$p" ] && say "     - $p"
+    done
+    say ""
+    say "   A real file/dir already exists at each path above, so the framework"
+    say "   version was NOT linked there and is NOT active. Move or remove the"
+    say "   local file/dir, then re-run install.sh, to bring the framework"
+    say "   version into effect."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -443,6 +502,16 @@ cat <<'STEPS'
 STEPS
 
 say ""
-say "Done. This installer is idempotent — re-run it any time; it will not"
-say "duplicate the hook, re-enable what is already on, or clobber your settings."
+if [ "${SHADOWED_COUNT:-0}" -gt 0 ]; then
+  if [ "$SHADOWED_COUNT" -eq 1 ]; then
+    say "Done — 1 framework entry was shadowed by a local override this run."
+  else
+    say "Done — $SHADOWED_COUNT framework entries were shadowed by local overrides this run."
+  fi
+  say "See the shadowed-entries banner above: those entries are NOT active."
+  say "The install itself is still valid and idempotent; re-run it any time."
+else
+  say "Done. This installer is idempotent — re-run it any time; it will not"
+  say "duplicate the hook, re-enable what is already on, or clobber your settings."
+fi
 exit 0

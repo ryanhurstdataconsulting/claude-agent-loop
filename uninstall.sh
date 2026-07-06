@@ -74,6 +74,13 @@ else
       link-dir|link-file) : ;;
       *) continue ;;
     esac
+    # Guard arity before touching $2: a malformed line (a known verb with no
+    # path argument) must warn and move on, not abort the whole run via an
+    # unset positional under `set -u`.
+    if [ "$#" -lt 2 ]; then
+      warn "MANIFEST: '$1' missing path — skipped"
+      continue
+    fi
     rel="$2"
     dest="$CLAUDE_DIR/$rel"
     if [ -L "$dest" ]; then
@@ -105,6 +112,10 @@ step "Step 2 — CLAUDE.md"
 
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
 CLAUDE_BAK="$CLAUDE_MD.bak-agentloop"
+
+if [ "$RESTORE_BACKUPS" -eq 1 ] && [ ! -f "$CLAUDE_BAK" ]; then
+  warn "--restore-backups requested but no backup found at $CLAUDE_BAK — stripping in place instead"
+fi
 
 if [ "$RESTORE_BACKUPS" -eq 1 ] && [ -f "$CLAUDE_BAK" ]; then
   if cp "$CLAUDE_BAK" "$CLAUDE_MD"; then
@@ -160,6 +171,10 @@ step "Step 3 — settings.json (SessionStart hook group)"
 
 SETTINGS="$CLAUDE_DIR/settings.json"
 SETTINGS_BAK="$SETTINGS.bak-agentloop"
+
+if [ "$RESTORE_BACKUPS" -eq 1 ] && [ ! -f "$SETTINGS_BAK" ]; then
+  warn "--restore-backups requested but no backup found at $SETTINGS_BAK — stripping in place instead"
+fi
 
 if [ "$RESTORE_BACKUPS" -eq 1 ] && [ -f "$SETTINGS_BAK" ]; then
   if cp "$SETTINGS_BAK" "$SETTINGS"; then

@@ -76,6 +76,10 @@ C="$H/.claude"
 run_install "$H" >/dev/null
 S="$C/settings.json"
 
+link_count="$(manifest_links | wc -l | tr -d ' ')"
+[ "$link_count" -gt 0 ] 2>/dev/null && pass "manifest_links yields >0 entries (assertions below aren't vacuous)" \
+  || fail "manifest_links yielded 0 entries — loop below would pass vacuously"
+
 link_fail=0
 for rel in $(manifest_links); do
   d="$C/$rel"
@@ -139,6 +143,20 @@ printf '%s\n' "$OUT" | grep -qF 'local override shadows framework: skills/token-
   && pass "override dir untouched (real, content intact)" || fail "override dir was clobbered"
 [ -L "$C/skills/aws-local-emulation" ] && pass "sibling entry still symlinked" || fail "sibling entry not linked"
 
+printf '%s\n' "$OUT" | grep -qE 'shadowed:[[:space:]]*2\b' \
+  && pass "summary reports 2 shadowed entries" || fail "summary did not report 2 shadowed entries"
+printf '%s\n' "$OUT" | grep -qF 'SHADOWED FRAMEWORK ENTRIES' \
+  && pass "shadowed banner printed" || fail "no shadowed banner printed"
+printf '%s\n' "$OUT" | grep -qF 'NOT active' \
+  && pass "banner states shadowed entries are not active" || fail "banner missing NOT-active sentence"
+banner_section="$(printf '%s\n' "$OUT" | sed -n '/SHADOWED FRAMEWORK ENTRIES/,/^[[:space:]]*$/p')"
+printf '%s\n' "$banner_section" | grep -qF 'agents/sql-safety-reviewer.md' \
+  && pass "banner lists the file override path" || fail "banner does not list the file override path"
+printf '%s\n' "$banner_section" | grep -qF 'skills/token-efficiency' \
+  && pass "banner lists the dir override path" || fail "banner does not list the dir override path"
+printf '%s\n' "$OUT" | tail -5 | grep -qF 'shadowed' \
+  && pass "final message reflects the shadowed count" || fail "final message does not mention shadowed entries"
+
 # ===========================================================================
 echo "== Scenario 4: seed divergence survives re-install =="
 H="$(new_home seed)"
@@ -173,6 +191,11 @@ printf 'diverged-marker\n' >> "$C/learning/SCALES.md"
 mkdir -p "$C/metrics/state"; printf '{}\n' > "$C/metrics/state/harvest.cursor.json"
 run_uninstall "$H" >/dev/null; urc=$?
 [ "$urc" -eq 0 ] && pass "uninstall exits 0" || fail "uninstall exit $urc"
+
+link_count="$(manifest_links | wc -l | tr -d ' ')"
+[ "$link_count" -gt 0 ] 2>/dev/null && pass "manifest_links yields >0 entries (assertions below aren't vacuous)" \
+  || fail "manifest_links yielded 0 entries — loop below would pass vacuously"
+
 un_fail=0
 for rel in $(manifest_links); do
   [ -L "$C/$rel" ] && { fail "symlink not removed: $rel"; un_fail=1; }
@@ -216,6 +239,46 @@ ln -s /nonexistent/path "$C/$target_rel"
 run_install "$H" >/dev/null
 { [ "$(readlink "$C/$target_rel")" = "$REPO/payload/$target_rel" ] && [ -e "$C/$target_rel" ]; } \
   && pass "broken symlink repaired to repo target" || fail "broken symlink not repaired"
+
+# ===========================================================================
+echo "== Scenario 9: malformed MANIFEST line is skipped, not fatal =="
+# Exercises the REAL install.sh against a real MANIFEST, copied to a scratch
+# repo dir with one line corrupted (a known verb, `link-dir`, missing its
+# path argument). Under the old code this expands an unset $2 with `set -u`
+# and the whole script dies mid-loop, silently skipping every step after it.
+SCRATCH_REPO="$SANDBOX_ROOT/repo-malformed"
+rm -rf "$SCRATCH_REPO"
+mkdir -p "$SCRATCH_REPO"
+cp -R "$REPO/install.sh" "$REPO/VERSION" "$REPO/payload" "$SCRATCH_REPO/"
+printf '\nlink-dir\n' >> "$SCRATCH_REPO/payload/MANIFEST"
+H="$(new_home malformed)"
+C="$H/.claude"
+OUT="$(env HOME="$H" PATH=/usr/bin:/bin bash "$SCRATCH_REPO/install.sh" </dev/null 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && pass "install exits 0 despite malformed MANIFEST line" || fail "install aborted (exit $rc) on malformed MANIFEST line"
+printf '%s\n' "$OUT" | grep -qF "MANIFEST: 'link-dir' missing path" \
+  && pass "warns about the malformed line" || fail "no warning printed for the malformed MANIFEST line"
+[ -f "$C/learning/.installed-version" ] \
+  && pass "later step ran: .installed-version written" || fail "later step did not run: .installed-version missing"
+grep -qF 'BEGIN AGENT-LOOP' "$C/CLAUDE.md" 2>/dev/null \
+  && pass "later step ran: CLAUDE.md sentinel present" || fail "later step did not run: CLAUDE.md sentinel missing"
+
+# ===========================================================================
+echo "== Scenario 10: --restore-backups with no backup present warns and strips in place =="
+H="$(new_home norestorebackup)"
+C="$H/.claude"
+run_install "$H" >/dev/null
+[ -f "$C/settings.json.bak-agentloop" ] && fail "test setup invalid: a backup exists (expected none on a fresh install)"
+[ -f "$C/CLAUDE.md.bak-agentloop" ] && fail "test setup invalid: a backup exists (expected none on a fresh install)"
+UOUT="$(run_uninstall "$H" --restore-backups)"; urc=$?
+[ "$urc" -eq 0 ] && pass "uninstall --restore-backups exits 0 with no backups present" || fail "uninstall exit $urc"
+printf '%s\n' "$UOUT" | grep -qF "$C/CLAUDE.md.bak-agentloop" \
+  && printf '%s\n' "$UOUT" | grep -qF 'no backup found' \
+  && pass "warns: no CLAUDE.md backup found, stripping in place" || fail "missing 'no backup found' warning for CLAUDE.md"
+printf '%s\n' "$UOUT" | grep -qF "$C/settings.json.bak-agentloop" \
+  && printf '%s\n' "$UOUT" | grep -qF 'no backup found' \
+  && pass "warns: no settings.json backup found, stripping in place" || fail "missing 'no backup found' warning for settings.json"
+[ "$(grep -cF 'BEGIN AGENT-LOOP' "$C/CLAUDE.md" 2>/dev/null)" = "0" ] \
+  && pass "CLAUDE.md still stripped in place despite missing backup" || fail "CLAUDE.md not stripped"
 
 # ===========================================================================
 echo "---"
