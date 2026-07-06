@@ -1,0 +1,95 @@
+# payload/MANIFEST — the installer's source of truth
+#
+# One entry per line. `#` starts a comment; blank lines are ignored. No
+# globs — every installed path is spelled out explicitly so the installer
+# never links or copies something this file did not name.
+#
+# Entry grammar:
+#   link-dir  <payload-relative-path>
+#     Symlink the whole directory into ~/.claude/<same-path>. Framework
+#     content stays live: `git pull` in the repo updates it instantly.
+#   link-file <payload-relative-path>
+#     Symlink a single file into ~/.claude/<same-path>.
+#   copy-if-absent <payload-relative-path> [<dest-relative-to-~/.claude>]
+#     Copy the file into ~/.claude only if nothing is already there — never
+#     overwrite live/learned state. The optional second column renames the
+#     destination (source and dest share a path when omitted).
+#
+# `mcp-specs/` and `fragments/` carry NO entries here — they are install-time
+# inputs that install.sh reads directly out of the repo, not files it places
+# under ~/.claude/.
+#
+# install.sh v2 (P1) is the sole consumer of this file: it walks these lines
+# and builds/repairs the symlink + copy-if-absent state on every run.
+
+# --- skills/ (10 dirs) -------------------------------------------------------
+link-dir skills/aws-local-emulation
+link-dir skills/data-visualization
+link-dir skills/document-render
+link-dir skills/environment-bootstrap
+link-dir skills/excalidraw-diagram
+link-dir skills/explain-code
+link-dir skills/resource-loop
+link-dir skills/tauri-desktop-dev
+link-dir skills/token-efficiency
+link-dir skills/visual-hierarchy-layered-charts
+
+# --- agents/ ------------------------------------------------------------------
+link-file agents/sql-safety-reviewer.md
+
+# --- hooks/ ---------------------------------------------------------------
+link-file hooks/inject-resource-loop.sh
+
+# --- tools/ (top-level files) -----------------------------------------------
+link-file tools/build_watch.sh
+link-file tools/check_coverage.sh
+link-file tools/distill_transcripts.py
+link-file tools/env_tooling_preflight.py
+link-file tools/git_safety_preflight.py
+link-file tools/lint_registry.py
+link-file tools/prose_grammar.py
+link-file tools/prose_grammar_gate.py
+link-file tools/run_canaries.sh
+link-file tools/secret_pii_scrub_gate.py
+link-file tools/ssh_tunnel_keepalive.sh
+link-dir tools/templates
+link-dir tools/tests
+
+# --- registry/guides/ (25 guides + template) --------------------------------
+link-file registry/guides/_TEMPLATE.md
+link-file registry/guides/background-build-watch.md
+link-file registry/guides/check-coverage.md
+link-file registry/guides/cloud-architect.md
+link-file registry/guides/data-visualization.md
+link-file registry/guides/dev-server-orchestration.md
+link-file registry/guides/distill-transcripts.md
+link-file registry/guides/document-render.md
+link-file registry/guides/env-tooling-preflight.md
+link-file registry/guides/environment-bootstrap.md
+link-file registry/guides/excalidraw-diagram.md
+link-file registry/guides/explain-code.md
+link-file registry/guides/git-safety-preflight.md
+link-file registry/guides/google_workspace.md
+link-file registry/guides/lint-registry.md
+link-file registry/guides/machine-prose-grammar-gate.md
+link-file registry/guides/playwright.md
+link-file registry/guides/postgres-readonly.md
+link-file registry/guides/resource-loop.md
+link-file registry/guides/run-canaries.md
+link-file registry/guides/secret-pii-scrub-gate.md
+link-file registry/guides/sql-safety-reviewer.md
+link-file registry/guides/ssh-tunnel-keepalive.md
+link-file registry/guides/tauri-desktop-dev.md
+link-file registry/guides/token-efficiency.md
+link-file registry/guides/visual-hierarchy-layered-charts.md
+link-file registry/candidates/README.md
+
+# --- registry/ index seeds (diverge after first install; never re-clobbered) ---
+copy-if-absent registry/REGISTRY.md
+copy-if-absent registry/TRIGGERS.md
+
+# --- learning/ seeds (diverge after first install; never re-clobbered) -----
+copy-if-absent learning/SCALES.md
+copy-if-absent learning/HEURISTICS.md
+copy-if-absent learning/LOOP_THEMES.md
+copy-if-absent learning/CLIENT_MARKERS.template.txt learning/CLIENT_MARKERS.txt

@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"quick question about the dashboard"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Short answer about the dashboard."}]}}

@@ -1,0 +1,131 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "excalidraw-diagram-skill",
+  "elements": [
+    {
+      "type": "rectangle",
+      "id": "title",
+      "x": 100,
+      "y": 60,
+      "width": 900,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#1e1e1e",
+      "fillStyle": "solid",
+      "label": { "text": "CLIENT × YOUR TEAM — How Your Data Becomes Decisions — YYYY-MM" }
+    },
+    {
+      "type": "rectangle",
+      "id": "input-need",
+      "x": 100,
+      "y": 220,
+      "width": 220,
+      "height": 90,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#D5E8D4",
+      "fillStyle": "solid",
+      "label": { "text": "What we need from you\n(your data + goals)" }
+    },
+    {
+      "type": "rectangle",
+      "id": "process-collect",
+      "x": 420,
+      "y": 180,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#DAE8FC",
+      "fillStyle": "solid",
+      "label": { "text": "We collect & clean\nthe numbers" }
+    },
+    {
+      "type": "rectangle",
+      "id": "process-analyze",
+      "x": 420,
+      "y": 290,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#DAE8FC",
+      "fillStyle": "solid",
+      "label": { "text": "We analyze your market\n& your competitors" }
+    },
+    {
+      "type": "rectangle",
+      "id": "process-build",
+      "x": 420,
+      "y": 400,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#DAE8FC",
+      "fillStyle": "solid",
+      "label": { "text": "We build a growth\ncampaign from the data" }
+    },
+    {
+      "type": "rectangle",
+      "id": "process-track",
+      "x": 420,
+      "y": 510,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#DAE8FC",
+      "fillStyle": "solid",
+      "label": { "text": "We track results &\noptimize monthly" }
+    },
+    {
+      "type": "rectangle",
+      "id": "output-report",
+      "x": 760,
+      "y": 180,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#FFF2CC",
+      "fillStyle": "solid",
+      "label": { "text": "Market size &\nopportunity report" }
+    },
+    {
+      "type": "rectangle",
+      "id": "output-strategy",
+      "x": 760,
+      "y": 290,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#FFF2CC",
+      "fillStyle": "solid",
+      "label": { "text": "Competitive positioning\n& strategy recs" }
+    },
+    {
+      "type": "rectangle",
+      "id": "output-campaign",
+      "x": 760,
+      "y": 400,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#FFF2CC",
+      "fillStyle": "solid",
+      "label": { "text": "Campaign plan with\ntargeting & projections" }
+    },
+    {
+      "type": "rectangle",
+      "id": "output-monthly",
+      "x": 760,
+      "y": 510,
+      "width": 240,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#FFF2CC",
+      "fillStyle": "solid",
+      "label": { "text": "Monthly reports —\nROI & member growth" }
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff",
+    "gridSize": 20
+  }
+}

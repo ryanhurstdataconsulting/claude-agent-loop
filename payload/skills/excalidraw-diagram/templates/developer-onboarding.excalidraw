@@ -1,0 +1,101 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "excalidraw-diagram-skill",
+  "elements": [
+    {
+      "type": "rectangle",
+      "id": "title",
+      "x": 100,
+      "y": 60,
+      "width": 900,
+      "height": 60,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#1e1e1e",
+      "fillStyle": "solid",
+      "label": { "text": "PROJECT NAME — Developer Onboarding — v1.0, YYYY-MM-DD" }
+    },
+    {
+      "type": "rectangle",
+      "id": "INGEST-001",
+      "x": 100,
+      "y": 200,
+      "width": 220,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#D5E8D4",
+      "fillStyle": "solid",
+      "label": { "text": "Input source\n[lang, lib]" }
+    },
+    {
+      "type": "rectangle",
+      "id": "PARSE-001",
+      "x": 420,
+      "y": 200,
+      "width": 220,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#DAE8FC",
+      "fillStyle": "solid",
+      "label": { "text": "Parse / clean\nsrc/parse/" }
+    },
+    {
+      "type": "rectangle",
+      "id": "ANALYZE-001",
+      "x": 740,
+      "y": 200,
+      "width": 220,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#E1D5E7",
+      "fillStyle": "solid",
+      "label": { "text": "Analyze / model\nsrc/analysis/" }
+    },
+    {
+      "type": "rectangle",
+      "id": "REPORT-001",
+      "x": 1060,
+      "y": 200,
+      "width": 220,
+      "height": 80,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#FFF2CC",
+      "fillStyle": "solid",
+      "label": { "text": "Report / output\noutput/*.docx" }
+    },
+    {
+      "type": "arrow",
+      "id": "arrow-1",
+      "x": 320,
+      "y": 240,
+      "endX": 420,
+      "endY": 240,
+      "strokeColor": "#333333",
+      "label": { "text": "raw payload" }
+    },
+    {
+      "type": "arrow",
+      "id": "arrow-2",
+      "x": 640,
+      "y": 240,
+      "endX": 740,
+      "endY": 240,
+      "strokeColor": "#333333",
+      "label": { "text": "cleaned dataset" }
+    },
+    {
+      "type": "arrow",
+      "id": "arrow-3",
+      "x": 960,
+      "y": 240,
+      "endX": 1060,
+      "endY": 240,
+      "strokeColor": "#333333",
+      "label": { "text": "analysis results" }
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff",
+    "gridSize": 20
+  }
+}

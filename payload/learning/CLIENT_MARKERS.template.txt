@@ -1,0 +1,26 @@
+# CLIENT_MARKERS.template.txt
+#
+# One marker per line, no inline comments. Blank lines and lines starting
+# with `#` are ignored. `classify_visibility.py` (P5) checks every
+# framework-bound write against this list before an autocommit is allowed to
+# land in payload/ — a hit routes the write to a plain ~/.claude file instead
+# (default-deny; see the autonomy mechanics in the plan's ARCHITECTURE.md).
+#
+# List anything that identifies YOUR work and must never reach the public
+# repo: client or employer names and abbreviations, internal or VPN-only
+# hostnames, bastion/jump-host addresses, personal names and email addresses,
+# and your home-directory path.
+#
+# Install copies this file to CLIENT_MARKERS.txt (copy-if-absent, so a
+# re-install never clobbers markers you have already added). Replace every
+# example below with your own real markers — none of these examples are
+# real; they are generic placeholders only.
+
+# --- examples only — replace all of these with your own markers ---
+acme-corp
+acme-internal
+db.internal.example.com
+bastion.example.com
+jane.doe@example.com
+Jane Doe
+/Users/janedoe

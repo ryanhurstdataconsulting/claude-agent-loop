@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "data-visualization",
+  "owner": "spjoshis",
+  "repo": "claude-code-plugins",
+  "path": "plugins/data-analyst/skills/data-visualization",
+  "branch": "main",
+  "sha": "c6d312bae035f4d3ee02fb80ac1e4a8890f4f8c1",
+  "source": "manual"
+}
