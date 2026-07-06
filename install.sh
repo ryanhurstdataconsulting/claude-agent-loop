@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# claude-agent-loop-starter installer
+# claude-agent-loop installer (v2 — MANIFEST-driven symlink engine)
 # -----------------------------------------------------------------------------
 # Idempotent. Safe to run twice. Never clobbers your existing config — it MERGES.
 # Backs up settings.json and CLAUDE.md once before touching them.
@@ -8,11 +8,17 @@
 #   Usage:  bash install.sh
 #   Then, in Claude Code:  /environment-bootstrap   (tailors it to your machine)
 #
-# What it installs into ~/.claude/:
-#   - skills/  agents/  tools/  registry/  hooks/   (copied, never deleting yours)
-#   - a SessionStart hook that injects the Resource Loop each session
-#   - the enabledPlugins map (11 plugins: superpowers + the VoltAgent catalog)
-#   - the agent-loop operating directives, appended to CLAUDE.md between sentinels
+# How framework content is installed:
+#   Every path named in payload/MANIFEST is SYMLINKED out of this repo working
+#   tree into ~/.claude/ (skills, agents, hooks, tools, registry guides). The
+#   files stay live: this repo IS the source of truth, so updating is just
+#
+#       git -C <this-repo> pull && bash install.sh
+#
+#   and the symlinked content is current the instant the pull lands — no copy
+#   step, no drift. A handful of files that are meant to DIVERGE locally
+#   (registry/REGISTRY.md + TRIGGERS.md and the learning/ seeds) are COPIED once
+#   and then never re-clobbered, so your learned state is never overwritten.
 #
 # It installs NO secret, NO database host, and NO MCP registration. Those are
 # templates under payload/mcp-specs/ that the environment-bootstrap skill helps
@@ -27,14 +33,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD="$SCRIPT_DIR/payload"
 CLAUDE_DIR="$HOME/.claude"
 FRAGMENTS="$PAYLOAD/fragments"
+MANIFEST="$PAYLOAD/MANIFEST"
+VERSION_FILE="$SCRIPT_DIR/VERSION"
+INSTALLED_VERSION_FILE="$CLAUDE_DIR/learning/.installed-version"
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 ok()   { printf '   [ok] %s\n' "$*"; }
 warn() { printf '   [!!] %s\n' "$*"; }
 
-say "claude-agent-loop-starter installer"
+say "claude-agent-loop installer (v2)"
 say "Target: $CLAUDE_DIR"
+say "Source: $SCRIPT_DIR  (framework files are symlinked from here)"
 
 # --- python3 is required for the JSON merges --------------------------------
 PY=""
@@ -67,35 +77,105 @@ backup_once "$CLAUDE_DIR/settings.json"
 backup_once "$CLAUDE_DIR/CLAUDE.md"
 
 # ---------------------------------------------------------------------------
-step "Step 2 — copy payload resources (merge; your other files are untouched)"
+step "Step 2 — install framework via MANIFEST (symlinks + seed copies)"
 
-copy_into() {
-  src="$1"; dest="$2"
-  if [ -d "$src" ]; then
-    mkdir -p "$dest"
-    if cp -R "$src/." "$dest/" 2>/dev/null; then
-      ok "$(basename "$dest")/  <-  payload/$(basename "$src")/"
+if [ ! -f "$MANIFEST" ]; then
+  warn "MANIFEST not found at $MANIFEST — cannot install framework files."
+else
+  # Capture the previously installed version BEFORE we overwrite the marker,
+  # so we can report the delta at the end.
+  PREV_VERSION=""
+  if [ -f "$INSTALLED_VERSION_FILE" ]; then
+    PREV_VERSION="$(cat "$INSTALLED_VERSION_FILE" 2>/dev/null)"
+  fi
+
+  # --- link-dir / link-file: symlink SRC -> DEST, repairing as needed -------
+  link_entry() {
+    rel="$1"
+    src="$PAYLOAD/$rel"
+    dest="$CLAUDE_DIR/$rel"
+    if [ ! -e "$src" ]; then
+      warn "MANIFEST names a missing payload path: $rel"
+      return
+    fi
+    if [ -L "$dest" ]; then
+      cur="$(readlink "$dest")"
+      if [ "$cur" = "$src" ]; then
+        ok "link ok: $rel"
+      else
+        rm -f "$dest"
+        if ln -s "$src" "$dest"; then
+          warn "relinked (was -> $cur): $rel"
+        else
+          warn "relink failed: $rel"
+        fi
+      fi
+    elif [ -e "$dest" ]; then
+      # A real file/dir the user put here. Never clobber it.
+      warn "local override shadows framework: $rel"
     else
-      warn "copy failed: $src -> $dest"
+      mkdir -p "$(dirname "$dest")"
+      if ln -s "$src" "$dest"; then
+        ok "linked: $rel"
+      else
+        warn "link failed: $rel"
+      fi
+    fi
+  }
+
+  # --- copy-if-absent: seed a file only when nothing is already there -------
+  copy_seed() {
+    src_rel="$1"; dest_rel="$2"
+    src="$PAYLOAD/$src_rel"
+    dest="$CLAUDE_DIR/$dest_rel"
+    if [ ! -f "$src" ]; then
+      warn "MANIFEST names a missing seed: $src_rel"
+      return
+    fi
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+      ok "seed present, leaving as-is: $dest_rel"
+    else
+      mkdir -p "$(dirname "$dest")"
+      if cp "$src" "$dest"; then
+        ok "seeded: $dest_rel"
+      else
+        warn "seed copy failed: $dest_rel"
+      fi
+    fi
+  }
+
+  # Walk the MANIFEST. `#` starts a full-line comment; blank lines are ignored.
+  while IFS= read -r rawline || [ -n "$rawline" ]; do
+    set -- $rawline
+    [ "$#" -eq 0 ] && continue
+    case "$1" in
+      '#'*)        continue ;;
+      link-dir|link-file) link_entry "$2" ;;
+      copy-if-absent)     copy_seed "$2" "${3:-$2}" ;;
+      *)           warn "MANIFEST: unknown verb '$1' (line ignored)" ;;
+    esac
+  done < "$MANIFEST"
+
+  # --- runtime dirs the framework expects (untracked data + learned state) --
+  mkdir -p "$CLAUDE_DIR/metrics/state"     && ok "metrics/state ready"     || warn "could not create metrics/state"
+  mkdir -p "$CLAUDE_DIR/learning/digests"  && ok "learning/digests ready"  || warn "could not create learning/digests"
+
+  # --- record the installed version -----------------------------------------
+  if [ -f "$VERSION_FILE" ]; then
+    if cp "$VERSION_FILE" "$INSTALLED_VERSION_FILE"; then
+      ok "recorded installed version -> learning/.installed-version"
+    else
+      warn "could not write learning/.installed-version"
     fi
   else
-    warn "missing payload dir: $src"
+    warn "VERSION file missing at $VERSION_FILE"
   fi
-}
 
-copy_into "$PAYLOAD/skills"   "$CLAUDE_DIR/skills"
-copy_into "$PAYLOAD/agents"   "$CLAUDE_DIR/agents"
-copy_into "$PAYLOAD/tools"    "$CLAUDE_DIR/tools"
-copy_into "$PAYLOAD/registry" "$CLAUDE_DIR/registry"
-copy_into "$PAYLOAD/hooks"    "$CLAUDE_DIR/hooks"
-
-# Make the hook and every shell tool executable.
-if [ -f "$CLAUDE_DIR/hooks/inject-resource-loop.sh" ]; then
-  chmod +x "$CLAUDE_DIR/hooks/inject-resource-loop.sh" 2>/dev/null && ok "hook is executable" || warn "could not chmod hook"
+  # --- make shell entrypoints executable THROUGH the repo (they're symlinks) -
+  find "$PAYLOAD/hooks" -name '*.sh' -exec chmod +x {} \; 2>/dev/null
+  find "$PAYLOAD/tools" -name '*.sh' -exec chmod +x {} \; 2>/dev/null
+  ok "shell tools under payload/tools/ and payload/hooks/ marked executable"
 fi
-find "$CLAUDE_DIR/hooks" -name '*.sh' -exec chmod +x {} \; 2>/dev/null
-find "$CLAUDE_DIR/tools" -name '*.sh' -exec chmod +x {} \; 2>/dev/null
-ok "shell tools under tools/ and hooks/ marked executable"
 
 # ---------------------------------------------------------------------------
 step "Step 3 — register plugin marketplaces"
@@ -319,7 +399,22 @@ fi
 
 # ---------------------------------------------------------------------------
 step "NEXT STEPS"
+
+# Report the version delta (current vs. the previously installed marker).
+NEW_VERSION="unknown"
+[ -f "$VERSION_FILE" ] && NEW_VERSION="$(cat "$VERSION_FILE" 2>/dev/null)"
+if [ -n "${PREV_VERSION:-}" ] && [ "${PREV_VERSION:-}" != "$NEW_VERSION" ]; then
+  say "   Updated: $PREV_VERSION  ->  $NEW_VERSION"
+else
+  say "   Installed version: $NEW_VERSION"
+fi
+
 cat <<'STEPS'
+
+   Framework files under ~/.claude/ are SYMLINKS into this repo working tree.
+   To update later, just pull and re-run — the symlinked content is live at once:
+         git -C <this-repo> pull && bash install.sh
+
    1. Tailor this setup to YOUR machine. Open Claude Code in VS Code and run:
          /environment-bootstrap
       It inspects your system, asks a few questions, and personalizes the
@@ -342,9 +437,9 @@ cat <<'STEPS'
       if the database is remote (ssh-tunnel-keepalive), and register the server
       per  payload/mcp-specs/postgres-readonly.md . The install ships NO secrets.
 
-   To undo: restore ~/.claude/settings.json.bak-agentloop and
-   ~/.claude/CLAUDE.md.bak-agentloop, and delete the block between the
-   <!-- BEGIN AGENT-LOOP --> / <!-- END AGENT-LOOP --> sentinels in CLAUDE.md.
+   To undo everything, run:  bash uninstall.sh
+   (add --restore-backups to also restore settings.json / CLAUDE.md from the
+   one-time .bak-agentloop copies).
 STEPS
 
 say ""
