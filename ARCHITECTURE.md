@@ -131,7 +131,7 @@ layers travel with your own repositories.
 
 | Category | Count | Location | Examples |
 |---|---|---|---|
-| Skills | 10 | `payload/skills/` | `resource-loop`, `token-efficiency`, `environment-bootstrap`, `data-visualization`, `document-render`, `tauri-desktop-dev` |
+| Skills | 11 | `payload/skills/` | `resource-loop`, `theme-assessment`, `token-efficiency`, `environment-bootstrap`, `data-visualization`, `document-render`, `tauri-desktop-dev` |
 | Agents | 1 (+1 from the plugin catalog) | `payload/agents/` | `sql-safety-reviewer` (bundled); `cloud-architect` is also available, sourced from the VoltAgent plugin catalog rather than a bundled file |
 | Tools | 11 | `payload/tools/` | `lint_registry.py`, `prose_grammar_gate.py`, `secret_pii_scrub_gate.py`, `git_safety_preflight.py`, `ssh_tunnel_keepalive.sh` |
 | Plugins | 11 | `settings.json` | `superpowers`, 10 VoltAgent categories |
@@ -233,6 +233,71 @@ for exactly this reason. A metrics record MUST NOT be copied into any tracked or
 publishable file without first passing the P5 visibility classifier
 (`classify_visibility.py`); default-deny routes anything CLIENT or UNSURE back
 to local-only files.
+
+---
+
+## Autonomy mechanics
+
+The loop does not just recommend changes — it commits them. This is the riskiest
+part of the system, so the write path is a single, heavily gated tool and the
+whole design is **default-deny**: when in doubt, a change lands in a local-only
+file that has no remote and therefore cannot leak.
+
+**The one write path.** `payload/tools/loop_autocommit.sh` is the ONLY sanctioned
+auto-write. It realpath-resolves each caller-supplied path and routes it to the
+**framework** repo (`~/dev/claude-agent-loop`, published) or the **local** repo
+(`~/.claude`, never published). A mixed set becomes two commits — framework
+first, then local — each subject suffixed `[framework]` / `[local]`.
+
+**Gate order** (all gates run BEFORE any commit lands, so an abort leaves both
+repos exactly as they were):
+
+0. **Gated lane** — `settings.json`, any `hooks/*.sh`, or a `CLAUDE.md` sentinel
+   block are REFUSED (exit 4). These stay owner-approved through a
+   `registry/candidates/` stub; no flag overrides the refusal.
+1. **`classify_visibility.py`** — every framework-bound path must classify
+   GENERIC. A CLIENT marker (from `learning/CLIENT_MARKERS.txt`) or a structural
+   risk signal (a `/Users/<name>` path, an email, a `user@host`, an IP) aborts
+   (exit 3). A missing markers file fails CLOSED — every input becomes UNSURE.
+   Local-lane paths are exempt (local-only, no remote).
+2. **`secret_pii_scrub_gate.py`** on the explicit paths — any finding aborts.
+3. **`prose_grammar_gate.py`** on any `.md` paths — any finding aborts.
+4. **`lint_registry.py`** (registry paths), **`lint_scales.py`** (`SCALES.md`),
+   **`lint_heuristics.py`** (`HEURISTICS.md`, if the P6 tool is present).
+
+On a gate abort, the affected index is reset (the working tree — the caller's
+edit — is preserved), an `autocommit-blocked` NEW row is appended to
+`LOOP_THEMES.md`, an OS notification fires, and the exit is non-zero. On success
+the tool stages the explicit paths only (never `-A`), commits with a `loop:`
+subject and a `Co-Authored-By: claude-agent-loop autonomy` trailer, and appends
+one line to `learning/AUTO_COMMITS.log`. **It never pushes.**
+
+**Rollback.** `payload/tools/loop_rollback.sh <sha>` (or `--last [N]`) reverts a
+loop commit with `git revert --no-edit`, logging each revert. It REFUSES (exit 4)
+to revert any commit whose subject lacks the `loop:` prefix — human commits are
+never touched — and re-runs the registry/scales linters after a revert as a
+guard (a lint failure is warned, never undoes the revert).
+
+**Digest cadence.** `payload/tools/loop_digest.py` renders
+`learning/digests/YYYY-MM-DD.md` from the auto-change ledger since the last
+digest: auto-commits grouped by repo (with an unpushed count), blocked attempts,
+theme transitions, and a current-month metrics summary. Its closing "Push now?"
+section is the ONLY place publication is ever suggested, and even there it is a
+manual command — the tool never runs it. The SessionStart hook injects a one-line
+digest nudge (its second and last budgeted line) when 10 or more entries are
+undigested, or when `.last-digest` is absent or older than seven days with at
+least one undigested entry.
+
+**Notifications.** `_notify` fires a macOS `osascript` notification on exactly
+two events: a new resource auto-created, and a safety gate blocked a commit. It
+is a no-op off macOS and never fails the commit path.
+
+**Promote flow.** Learning files diverge from their repo seeds locally.
+`payload/tools/loop_promote.py` is a read-only diff of `learning/{SCALES,
+HEURISTICS}.md` against `payload/learning/*`; promoting a learned change back into
+a published seed is a manual, owner-reviewed act — run `classify_visibility.py`
+and the scrub gate over the hunks and generalize anything they flag before it
+ships.
 
 ---
 

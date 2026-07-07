@@ -14,21 +14,26 @@ propose, a dead end to dismiss, or a signal too thin to call yet.
 Run it when the SessionStart hook nudges you (`Loop themes: N unprocessed`), when
 the count crosses 10, or any time you want to clear the backlog by hand.
 
-**Autonomy note (until P5).** Promotions are **manual-approval candidates**, not
-auto-created resources. This skill files a candidate stub and rewrites the theme
-row's status; it never builds the resource itself. P5's autonomy tooling
-(`loop_autocommit.sh`, the visibility classifier) will change how the commit
-happens, but the owner-approval gate stays.
+**Autonomy (P5 and later).** A PROMOTE may now **auto-create** the resource: this
+skill builds the new skill/agent/tool/guide and commits it through
+`loop_autocommit.sh` (subject `loop: feat(<kind>): <slug> (theme promotion)`, a
+three-section body whose evidence quotes the cluster). The **gated lane** is the
+sole exception — a promotion that would touch `settings.json`, a hook script, or
+the `CLAUDE.md` sentinel block still stops at a `candidates/` stub for the owner,
+because `loop_autocommit.sh` refuses those paths by design. Everything the tool
+commits passes the visibility classifier, the secret/PII scrub gate, and the
+grammar gate first, so nothing client-tinged reaches a tracked file.
 
 ## The live file, not the seed
 
 Read the **live** `~/.claude/learning/LOOP_THEMES.md`. The repo ships a
 header-only seed; the rows accumulate locally and never leave the machine. A
 theme row's `metrics-ref` may point at a metric shard because that file is
-local-only state — but **anything you promote into a tracked resource must pass
-the P5 visibility classifier first** (metric records carry project slugs and
-branch names). Until P5, a promotion stops at a `candidates/` stub for the owner
-to review; nothing client-tinged is copied into a publishable file.
+local-only state — but **anything you promote into a tracked resource passes the
+visibility classifier first** (metric records carry project slugs and branch
+names). `loop_autocommit.sh` runs that classifier on every framework-bound path
+and aborts on any CLIENT or UNSURE verdict, so nothing client-tinged is copied
+into a publishable file.
 
 ## Procedure
 
@@ -50,19 +55,33 @@ to review; nothing client-tinged is copied into a publishable file.
 
 4. **Decide per cluster**, one of three:
    - **PROMOTE** — the evidence shows a resource should be created or an existing
-     one patched (a recurring pain a skill/tool/guide would fix).
+     one patched (a recurring pain a skill/tool/guide would fix). Promote only
+     when the cluster clears the **candidates evidence bar**: the same signal in
+     **2 or more sessions**, or **3 or more times in one session**. A singleton
+     cluster does not clear the bar — route it to LEAVE and let more evidence
+     accumulate.
    - **DISMISS** — a one-off, noise, or a `wontfix`.
    - **LEAVE** — the signal is too thin to call. The rows stay `NEW` and wait
      for more evidence; do not force a decision.
 
-5. **Act on the decision (until P5's autonomy tooling lands).**
-   - **Promotion:** file a stub at
-     `~/.claude/registry/candidates/YYYY-MM-DD-<slug>.md` using the candidate
-     format (Status: candidate, a `## Evidence` section listing the cluster's
-     rows and the metric records that back them). Then rewrite each row in the
-     cluster from `| NEW |` to `| PROMOTED:<slug> |`, where `<slug>` matches the
-     candidate filename. **Do not create the resource** — the candidate is the
-     owner-approval gate.
+5. **Act on the decision.**
+   - **Promotion (standard lane):** build the resource, then commit it with
+     `loop_autocommit.sh -m "loop: feat(<kind>): <slug> (theme promotion)"
+     -b <bodyfile> <paths...>`, where `<kind>` is `skill`/`agent`/`tool`/`guide`
+     and the body is the house three-section format whose (1)/(2)/(3) sections
+     quote the cluster's rows and the metric records that back them. Add the
+     registry row and the guide in the same invocation so the linter's bijection
+     holds. Then rewrite each cluster row from `| NEW |` to `| PROMOTED:<slug> |`.
+     `loop_autocommit.sh` gates the whole commit (visibility classifier, scrub,
+     grammar, linters) and routes framework-generic and local-client paths into
+     separate commits automatically.
+   - **Promotion (gated lane):** if the fix would touch `settings.json`, a hook
+     script, or the `CLAUDE.md` sentinel block, do **not** auto-create it —
+     `loop_autocommit.sh` refuses those paths. File a stub at
+     `~/.claude/registry/candidates/YYYY-MM-DD-<slug>.md` (use
+     `registry/guides/_TEMPLATE.md` for the structure — Status: candidate, plus a
+     `## Evidence` section listing the cluster and its metric records) and set the
+     rows to `| PROMOTED:<slug> |`. The owner builds it.
    - **Dismissal:** rewrite each row's status to `| DISMISSED:<reason-slug> |`
      (a short kebab-case reason such as `one-off` or `wontfix`). Put the full
      rationale in the commit body, not the row.
@@ -70,10 +89,10 @@ to review; nothing client-tinged is copied into a publishable file.
 
 6. **Rewrite in place; never delete.** Statuses are edited on the existing
    rows — rows are marked, never removed, so the history of what was seen and
-   decided survives. Commit the `LOOP_THEMES.md` edit (plus any candidate stub)
-   in the local `~/.claude` repo per the house three-section protocol
-   ((1) Task & Change / (2) Tests or evidence / (3) Results). The metrics
-   evidence you cite satisfies section (3) for this doc-only change.
+   decided survives. The `LOOP_THEMES.md` status rewrite is a local edit; it can
+   ride in the same `loop_autocommit.sh` invocation as the resource (the tool
+   splits the framework and local paths into two commits), and the metrics
+   evidence you cite satisfies section (3) of the body for this doc-only part.
 
 7. **Lint after any registry edit.** A promotion writes into
    `~/.claude/registry/`, so run `python3 ~/.claude/tools/lint_registry.py`

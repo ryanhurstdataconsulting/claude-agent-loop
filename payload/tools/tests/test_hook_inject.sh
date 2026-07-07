@@ -75,5 +75,52 @@ out=$(env HOME="$H" "$HOOK"); rc=$?
 [ $rc -eq 0 ] || { echo "FAIL: themes-notool exit $rc"; fails=1; }
 printf '%s\n' "$out" | grep -q 'Loop themes:' && { echo "FAIL: nudge fired with tool missing"; fails=1; }
 
+# --- Digest nudge (P5, line 2 of 2) ------------------------------------------
+# The hook resolves loop_digest.py and the ledger from $HOME/.claude, so every
+# case runs under an isolated HOME=$TMP. The nudge fires at 10 or more undigested
+# AUTO_COMMITS.log entries and stays quiet when nothing is due.
+
+# Build an isolated HOME with loop_digest.py installed and a ledger of $2 loop
+# entries; optionally seed .last-digest with $3. Prints the HOME path.
+digest_home() {
+  h="$SANDBOX/$1"
+  rm -rf "$h"
+  mkdir -p "$h/.claude/tools" "$h/.claude/learning"
+  cp "$TOOLS/loop_digest.py" "$h/.claude/tools/" 2>/dev/null
+  {
+    i=0
+    while [ "$i" -lt "$2" ]; do
+      printf '2026-01-01T00:00:00Z\tclaude-agent-loop\tsha%d\tloop: change %d\t-\n' "$i" "$i"
+      i=$((i + 1))
+    done
+  } > "$h/.claude/learning/AUTO_COMMITS.log"
+  [ -n "${3:-}" ] && printf '%s' "$3" > "$h/.claude/learning/.last-digest"
+  printf '%s' "$h"
+}
+
+# Case D: 12 undigested entries, no .last-digest -> exactly one digest nudge.
+H="$(digest_home dtwelve 12)"
+out=$(env HOME="$H" "$HOOK"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: digest-12 exit $rc"; fails=1; }
+n=$(printf '%s\n' "$out" | grep -c 'Loop digest pending: 12')
+[ "$n" -eq 1 ] || { echo "FAIL: expected 1 digest nudge, got $n"; fails=1; }
+printf '%s\n' "$out" | awk '/<resource-loop>/{o=1} /Loop digest pending: 12/{if(o)f=1} /<\/resource-loop>/{o=0} END{exit f?0:1}' \
+  || { echo "FAIL: digest nudge not inside <resource-loop> tags"; fails=1; }
+
+# Case E: entries all predate a later .last-digest -> nothing undigested, no nudge.
+H="$(digest_home drecent 5 '2026-06-01T00:00:00Z')"
+out=$(env HOME="$H" "$HOOK"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: digest-recent exit $rc"; fails=1; }
+printf '%s\n' "$out" | grep -q 'Loop digest pending:' && { echo "FAIL: digest nudge fired with nothing undigested"; fails=1; }
+
+# Case F: tool missing -> degrade to no nudge, exit 0.
+H="$SANDBOX/dnotool"
+rm -rf "$H"; mkdir -p "$H/.claude/learning"
+{ i=0; while [ "$i" -lt 12 ]; do printf '2026-01-01T00:00:00Z\tr\ts%d\tloop: c\t-\n' "$i"; i=$((i + 1)); done; } \
+  > "$H/.claude/learning/AUTO_COMMITS.log"
+out=$(env HOME="$H" "$HOOK"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: digest-notool exit $rc"; fails=1; }
+printf '%s\n' "$out" | grep -q 'Loop digest pending:' && { echo "FAIL: digest nudge fired with tool missing"; fails=1; }
+
 [ $fails -eq 0 ] && echo "hook tests: OK" || echo "hook tests: FAIL"
 exit $fails

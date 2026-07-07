@@ -21,12 +21,12 @@ else
   echo "--- REGISTRY INDEX unavailable; read ~/.claude/registry/guides/ on demand ---"
 fi
 
-# --- Nudge budget: at most 2 injected lines inside these tags. ---------------
+# --- Nudge budget: at most 2 injected lines inside these tags (2 of 2 used). --
 # Line 1 of 2: the loop-themes nudge (P4). When 10 or more theme rows are still
 # unprocessed, point the session at the theme-assessment skill. Additive-only:
 # if python3 or the counter tool is missing, or the count is not a plain
 # integer, we inject nothing and never fail the session start.
-# Line 2 of 2 is RESERVED for the P5 digest nudge ("N undigested auto-commits").
+# Line 2 of 2: the digest nudge (P5), added below after the themes block.
 THEME_NUDGE_AT=10
 THEMES_TOOL="$HOME/.claude/tools/themes_pending.py"
 THEMES_FILE="$HOME/.claude/learning/LOOP_THEMES.md"
@@ -39,6 +39,19 @@ if command -v python3 >/dev/null 2>&1 && [ -r "$THEMES_TOOL" ]; then
         echo "Loop themes: $pending unprocessed — run Skill(theme-assessment)."
       fi
       ;;
+  esac
+fi
+
+# Line 2 of 2: the digest nudge (P5). loop_digest.py --nudge prints one line
+# when a digest is due (10+ undigested AUTO_COMMITS.log entries, or a stale/
+# absent .last-digest with at least one undigested entry) and nothing otherwise.
+# Same degrade discipline: a missing python3 or tool injects nothing, exit 0.
+DIGEST_TOOL="$HOME/.claude/tools/loop_digest.py"
+if command -v python3 >/dev/null 2>&1 && [ -r "$DIGEST_TOOL" ]; then
+  digest_line="$(python3 "$DIGEST_TOOL" --nudge 2>/dev/null)"
+  case "$digest_line" in
+    '') : ;;                                # nothing due — no nudge
+    *) printf '%s\n' "$digest_line" ;;
   esac
 fi
 

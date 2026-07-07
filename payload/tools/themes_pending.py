@@ -25,6 +25,10 @@ import argparse
 import pathlib
 import sys
 
+# Invariant: LOOP_THEMES.md is a FLAT pipe-table — one theme per single line, no
+# fenced code blocks and no multi-line prose rows — so a line-prefix test is
+# sufficient here and no markdown parser is ever needed.
+#
 # The canonical NEW-status cell as writers emit it: pipe, space, NEW, space,
 # pipe. "| NEWISH |" and "|NEW|" (no spaces) deliberately do not match — a row
 # that is not in the writer format is treated as malformed and skipped.

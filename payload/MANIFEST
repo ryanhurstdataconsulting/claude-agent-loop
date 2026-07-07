@@ -46,12 +46,17 @@ link-file hooks/precompact-event.sh
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/build_watch.sh
 link-file tools/check_coverage.sh
+link-file tools/classify_visibility.py
 link-file tools/distill_transcripts.py
 link-file tools/env_tooling_preflight.py
 link-file tools/git_safety_preflight.py
 link-file tools/harvest_metrics.py
 link-file tools/lint_registry.py
 link-file tools/lint_scales.py
+link-file tools/loop_autocommit.sh
+link-file tools/loop_digest.py
+link-file tools/loop_promote.py
+link-file tools/loop_rollback.sh
 link-file tools/prose_grammar.py
 link-file tools/prose_grammar_gate.py
 link-file tools/run_canaries.sh
