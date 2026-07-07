@@ -24,23 +24,24 @@ that tailors all three to your machine. Everything below maps to real files in
                           │ injects index + directive into context
                           ▼
   ┌───────────────────────────────────────────────┐
-  │ resource-loop  (skill)                         │   payload/skills/
-  │                                                │     resource-loop/
-  │   MATCH ──► ANNOUNCE ──► GAP ──► ROUTE          │
-  └───┬─────────┬──────────┬────────────┬──────────┘
-      │         │          │            │
-      ▼         ▼          ▼            ▼
-   registry  one-line   candidate    subagents by
-   lookup    "Resource  stub filed   model tier
-             Loop —"    for review   (see table)
-      │                    │
-      │                    ▼
-      │            registry/candidates/
-      ▼
+  │ resource-loop  (skill) — the closed loop      │   payload/skills/
+  │                                               │     resource-loop/
+  │   MATCH     read the registry (+ TRIGGERS)    │
+  │   ANNOUNCE  emit the "Resource Loop —" line   │
+  │   ROUTE     dispatch subagents by model tier  │
+  │   EXECUTE   run work; hooks harvest metrics   │
+  │   SCORE     record a self-score               │
+  │   LEARN     evaluate heuristics; act + log    │
+  └───────────────────────┬───────────────────────┘
+                          │ reaches for resources
+                          ▼
   ┌───────────────────────────────────────────────┐
-  │ RESOURCES it reaches for                       │
-  │  skills · agent · tools · plugins · MCP specs  │
+  │ RESOURCES it reaches for                      │
+  │  skills · agent · tools · plugins · MCP specs │
   └───────────────────────────────────────────────┘
+
+  GAP is a side behavior of MATCH/ANNOUNCE: a recurring need with no
+  resource files a registry/candidates/ stub for review — never auto-made.
 ```
 
 If the registry file is unreadable, the hook still prints the directive and
@@ -100,8 +101,14 @@ The registry is inert until a session runs the loop over it:
 
 - **`payload/hooks/inject-resource-loop.sh`** injects the index every session
   (wired through `settings.json → hooks.SessionStart`).
-- **`payload/skills/resource-loop/`** is the skill that executes
-  MATCH → ANNOUNCE → GAP → ROUTE against the injected index.
+- **`payload/skills/resource-loop/`** is the skill that executes the six-step
+  closed loop — MATCH → ANNOUNCE → ROUTE → EXECUTE → SCORE → LEARN — against the
+  injected index, with GAP a side behavior that files a `candidates/` stub when a
+  recurring need has no resource.
+- **`payload/hooks/harvest-metrics.sh`** (SubagentStop, SessionEnd) and
+  **`payload/hooks/precompact-event.sh`** (PreCompact) passively record the
+  objective metrics the SCORE and LEARN steps read back. See the metrics store
+  contract below, and `LEARNING.md` for the whole self-learning layer.
 
 ### 3. Doc-cascade layer — the instruction precedence
 
@@ -133,7 +140,7 @@ layers travel with your own repositories.
 |---|---|---|---|
 | Skills | 11 | `payload/skills/` | `resource-loop`, `theme-assessment`, `token-efficiency`, `environment-bootstrap`, `data-visualization`, `document-render`, `tauri-desktop-dev` |
 | Agents | 1 (+1 from the plugin catalog) | `payload/agents/` | `sql-safety-reviewer` (bundled); `cloud-architect` is also available, sourced from the VoltAgent plugin catalog rather than a bundled file |
-| Tools | 11 | `payload/tools/` | `lint_registry.py`, `prose_grammar_gate.py`, `secret_pii_scrub_gate.py`, `git_safety_preflight.py`, `ssh_tunnel_keepalive.sh` |
+| Tools | 22 | `payload/tools/` | the learning tools (`harvest_metrics.py`, `score_task.py`, `heuristics_eval.py`, `classify_visibility.py`, `loop_autocommit.sh`, `loop_rollback.sh`, `loop_digest.py`, `loop_promote.py`, `lint_scales.py`, `lint_heuristics.py`, `themes_pending.py`) plus the carried set (`lint_registry.py`, `prose_grammar_gate.py`, `secret_pii_scrub_gate.py`, `git_safety_preflight.py`, `ssh_tunnel_keepalive.sh`, …) |
 | Plugins | 11 | `settings.json` | `superpowers`, 10 VoltAgent categories |
 | MCP specs | 3 files | `payload/mcp-specs/` | `postgres-readonly` (read-only Postgres/MySQL spec), `global-mcps` (`playwright`, `google_workspace`), `secrets.env.template` |
 

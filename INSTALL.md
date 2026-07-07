@@ -16,14 +16,21 @@ read it to understand exactly what the script changes. Every path is under
 1. Creates `~/.claude/` if it does not exist.
 2. Backs up `~/.claude/settings.json` and `~/.claude/CLAUDE.md` to
    `*.bak-agentloop` — **once** (a second run does not overwrite the backup).
-3. Copies `payload/skills`, `payload/agents`, `payload/tools`,
-   `payload/registry`, and `payload/hooks` into `~/.claude/`, merging with what
-   is already there (it never deletes your files).
-4. Marks the hook and every `*.sh` tool executable.
+3. **Symlinks** the framework files named in `payload/MANIFEST` (skills, agents,
+   tools, hooks, and the registry guides) into `~/.claude/`, so a later
+   `git pull` updates them in place. The registry index (`REGISTRY.md`,
+   `TRIGGERS.md`) and the `learning/` seeds are **copied once** and then left
+   alone, so your learned state is never re-clobbered. A real file you have put
+   at a target path is never overwritten — the installer warns that it shadows
+   the framework version.
+4. Marks every hook and every `*.sh` tool executable, and creates the runtime
+   `metrics/` and `learning/` directories.
 5. Registers two plugin marketplaces (via the `claude` CLI when available,
    otherwise by writing them into `settings.json`).
 6. Deep-merges `payload/fragments/settings.fragment.json` into
-   `~/.claude/settings.json`.
+   `~/.claude/settings.json` — the four hook groups (SessionStart, SubagentStop,
+   SessionEnd, PreCompact), the plugin map, and the marketplaces — deduping by
+   command so a re-run never double-adds.
 7. Appends `payload/fragments/CLAUDE.starter.md` into `~/.claude/CLAUDE.md`,
    between the `<!-- BEGIN AGENT-LOOP -->` and `<!-- END AGENT-LOOP -->`
    sentinels.
@@ -40,22 +47,39 @@ mkdir -p ~/.claude
 [ -f ~/.claude/CLAUDE.md ]     && cp ~/.claude/CLAUDE.md     ~/.claude/CLAUDE.md.bak-agentloop
 ```
 
-### 2. Copy the payload resources
+### 2. Install the payload resources
 
-From this export folder:
+`install.sh` **symlinks** every framework path named in `payload/MANIFEST` out of
+this repo into `~/.claude/`, so the repo stays the single source of truth and a
+`git pull` is live at once. To approximate that by hand, link the framework
+directories, mark the shell entry points executable, and create the runtime
+directories:
 
 ```bash
-cp -R payload/skills/.   ~/.claude/skills/
-cp -R payload/agents/.   ~/.claude/agents/
-cp -R payload/tools/.    ~/.claude/tools/
-cp -R payload/registry/. ~/.claude/registry/
-cp -R payload/hooks/.    ~/.claude/hooks/
-chmod +x ~/.claude/hooks/inject-resource-loop.sh
-find ~/.claude/tools -name '*.sh' -exec chmod +x {} \;
+ln -s "$PWD/payload/skills"  ~/.claude/skills     # (see MANIFEST for the exact per-file list)
+ln -s "$PWD/payload/agents"  ~/.claude/agents
+ln -s "$PWD/payload/tools"   ~/.claude/tools
+ln -s "$PWD/payload/hooks"   ~/.claude/hooks
+find payload/hooks -name '*.sh' -exec chmod +x {} \;
+find payload/tools -name '*.sh' -exec chmod +x {} \;
+mkdir -p ~/.claude/metrics/state ~/.claude/learning/digests
 ```
 
-`cp -R <dir>/. <dest>/` copies the *contents* of `<dir>` into `<dest>`, merging
-with whatever is already there.
+Prefer a static snapshot instead? `cp -R payload/<dir>/. ~/.claude/<dir>/` copies
+rather than links — but then updates are not live, and you re-copy after each
+`git pull`. Either way, seed the registry index and the `learning/` files **only
+if they are absent**, so an existing local copy (your learned state) is never
+overwritten:
+
+```bash
+mkdir -p ~/.claude/registry ~/.claude/learning
+for f in registry/REGISTRY.md registry/TRIGGERS.md \
+         learning/SCALES.md learning/HEURISTICS.md learning/LOOP_THEMES.md; do
+  [ -e ~/.claude/"$f" ] || cp payload/"$f" ~/.claude/"$f"
+done
+[ -e ~/.claude/learning/CLIENT_MARKERS.txt ] \
+  || cp payload/learning/CLIENT_MARKERS.template.txt ~/.claude/learning/CLIENT_MARKERS.txt
+```
 
 ### 3. Register the plugin marketplaces
 
@@ -75,12 +99,16 @@ Add these keys to `~/.claude/settings.json`, keeping everything you already
 have. Use a JSON-aware edit (the installer uses `python3`); do not use `sed` on
 JSON.
 
-- **`hooks.SessionStart`** — append this group (only if a group with the same
-  command is not already present), with `$HOME` replaced by your real home:
+- **`hooks`** — add these four event groups (each only if a group with the same
+  command is not already present), with `$HOME` replaced by your real home. The
+  SessionStart hook injects the registry index; the other three passively
+  harvest the metrics the loop learns from:
 
   ```json
-  { "hooks": [ { "type": "command",
-                 "command": "$HOME/.claude/hooks/inject-resource-loop.sh" } ] }
+  "SessionStart": [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/inject-resource-loop.sh" } ] } ],
+  "SubagentStop": [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/harvest-metrics.sh" } ] } ],
+  "SessionEnd":   [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/harvest-metrics.sh" } ] } ],
+  "PreCompact":   [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/precompact-event.sh" } ] } ]
   ```
 
 - **`enabledPlugins`** — set each of these to `true`:
@@ -145,6 +173,21 @@ own connection details. Re-run it any time your setup changes.
 
 ---
 
+## Updating
+
+The framework files under `~/.claude/` are symlinks into this repo, so updating
+is just:
+
+```bash
+git -C <this-repo> pull && bash install.sh
+```
+
+The symlinked content is live the instant the pull lands. `install.sh` prints the
+version delta, re-seeds only what is missing, and never re-clobbers your learned
+`registry/` and `learning/` state.
+
+---
+
 ## Connecting a database (optional, and yours to wire up)
 
 The export contains no secrets and no hostnames. To use the read-only
@@ -177,7 +220,10 @@ Postgres/MySQL MCP:
 2. If you would rather keep your current `CLAUDE.md`, just delete the block
    between `<!-- BEGIN AGENT-LOOP -->` and `<!-- END AGENT-LOOP -->`.
 
-3. The copied `skills/`, `agents/`, `tools/`, `registry/`, and `hooks/` files
-   are additive. Remove the specific files the payload added if you want them
-   gone; nothing else depends on them once the hook and the CLAUDE.md block are
-   removed.
+3. The framework `skills/`, `agents/`, `tools/`, `registry/`, and `hooks/`
+   entries are **symlinks** into this repo (additive — they never replace your
+   own files). The cleanest undo is `bash uninstall.sh`, which removes only the
+   symlinks that resolve into the repo, our four hook groups, and the `CLAUDE.md`
+   block; add `--restore-backups` to also restore `settings.json` / `CLAUDE.md`
+   from the one-time `.bak-agentloop` copies. Your `metrics/` and `learning/`
+   data are left untouched.

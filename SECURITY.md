@@ -6,7 +6,7 @@ tokens, JWTs, SSH keys, passwords, or personal data.**
 
 ## How it was built
 
-`claude-agent-loop-starter` was generalized from a working, client-specific
+`claude-agent-loop` was generalized from a working, client-specific
 Claude Code environment. Everything that identified the original client was
 removed — organization and product names, infrastructure hostnames, project
 codenames, customer and personal data, and every domain-specific resource. What
@@ -16,8 +16,10 @@ pieces are placeholder templates you fill in yourself (see below).
 
 ## Remaining scanner findings — all benign, explained
 
-Re-running the scrub over this bundle (scanning every file) reports 8 matches;
-each is an example, a placeholder, or the scanner describing itself:
+Every finding the scanner reports is an example, a placeholder, a synthetic test
+fixture, or the scanner describing itself — **none is real data.**
+
+**The shipped resources** carry 8 findings:
 
 | Location | Hits | What it is | Why it is safe |
 |---|---|---|---|
@@ -25,6 +27,19 @@ each is an example, a placeholder, or the scanner describing itself:
 | `payload/skills/tauri-desktop-dev/SKILL.md` | 4 | generic `/Users/<you>`-style example paths | placeholders illustrating a Tauri `homeDir()` bug — no real username |
 | `payload/skills/aws-local-emulation/references/ministack.md` | 1 | the LocalStack dummy credential (the literal word test) | the standard LocalStack sandbox value |
 | `payload/mcp-specs/postgres-readonly.md` | 1 | a placeholder Postgres connection string (all `<PLACEHOLDERS>`) | the MCP template's example — no real host or credential |
+
+**The client-markers template** (`payload/learning/CLIENT_MARKERS.template.txt`)
+adds 2: a placeholder example email and an example home-directory path. The
+template's whole job is to show the shape of the markers you replace with your own
+before the visibility classifier uses them, and its header says as much — the
+examples are generic, not real.
+
+**The carried test suite** (`payload/tools/tests/`) adds the rest. The framework's
+own tests prove that the scrub gate, the redactor, and the visibility classifier
+actually catch secrets and PII, so their fixtures contain **deliberately planted,
+synthetic** JWTs, keys, emails, and `/Users/<name>`-style paths for the tools to
+find. The scanner flags those fixtures too — which is exactly the point. They are
+invented test values, not credentials, and they never leave the test tree.
 
 This file, `SECURITY.md`, is written to avoid the scanner's trigger patterns, so
 it adds no findings of its own.
@@ -74,4 +89,8 @@ so the owner reviews with them in mind.
 python3 payload/tools/secret_pii_scrub_gate.py .
 ```
 
-The findings you see should match the table above (8 total) and nothing else.
+Every hit should fall into one of the three benign buckets above — the 8-row
+table, the client-markers template, or a synthetic fixture under
+`payload/tools/tests/`. A local working tree may additionally surface findings
+under `.superpowers/`, a gitignored build-artifact directory that is not part of
+the published repo. Nothing real, anywhere.
