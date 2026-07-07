@@ -543,10 +543,13 @@ def harvest(transcript, event, metrics_dir, session_id=None):
         # so their task records usually carry resources_deployed=[] while the
         # main-thread session record holds the real deploy list. Once the
         # session's resources_deployed is known and non-empty, re-emit a
-        # REPLACEMENT task record (last-wins) for every subagent whose OWN
-        # announce was empty, tagged resources_source="session-backfill". This
-        # is a re-emit, NOT a re-cursor: mtime/size skipping is unaffected, and
-        # a subagent that announced its own resources is never re-emitted.
+        # REPLACEMENT task record (last-wins) for every UN-ANNOUNCED subagent
+        # (no Resource Loop line), tagged resources_source="session-backfill".
+        # This is a re-emit, NOT a re-cursor: mtime/size skipping is unaffected.
+        # Two kinds of subagent are never backfilled: one that announced its own
+        # resources, and one that explicitly announced bare ("no registry match;
+        # proceeding bare") — a bare task genuinely deployed nothing, so it must
+        # not inherit the session's resources.
         #
         # Idempotency (N1): resumed sessions fire SessionEnd repeatedly, so
         # each backfill records a "backfilled" marker (the sorted session
@@ -570,8 +573,12 @@ def harvest(transcript, event, metrics_dir, session_id=None):
                             and prev.get("backfilled") == marker):
                         continue   # already backfilled with this exact list
                     task_rec = build_record(agent_file, event, "task")
-                    if task_rec["resources_deployed"]:
-                        continue   # announced its own — keep it, do not re-emit
+                    if task_rec["resources_deployed"] or task_rec.get("bare"):
+                        # Announced its own resources, OR explicitly announced
+                        # bare ("no registry match; proceeding bare") — a bare
+                        # task genuinely deployed nothing and must not inherit
+                        # the session's resources. Keep it; do not re-emit.
+                        continue
                     task_rec["resources_deployed"] = list(session_resources)
                     task_rec["resources_source"] = "session-backfill"
                     _append_record(metrics_dir, task_rec)

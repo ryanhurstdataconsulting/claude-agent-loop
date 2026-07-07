@@ -7,12 +7,13 @@ cat <<'EOF'
 Run the Resource Loop before your first task (skill: resource-loop):
 MATCH the task against the index below; ANNOUNCE one line starting
 "Resource Loop — deploying:" (or "Resource Loop — no registry match;
-proceeding bare."); file GAPs as candidate stubs in
-~/.claude/registry/candidates/; ROUTE subagents (planning = session model,
-creation = opus, mechanical = sonnet/haiku). Keyword shortcuts for MATCH are
-in ~/.claude/registry/TRIGGERS.md. Carry this directive into every subagent
-brief. First run on this machine? Run the environment-bootstrap skill to
-tailor this config to your stack.
+proceeding bare."); ROUTE subagents (planning = session model, creation =
+opus, mechanical = sonnet/haiku); EXECUTE; SCORE the result; LEARN (evaluate
+heuristics → improve-now / theme-note / no-action). File GAPs (recurring
+unmet needs) as candidate stubs in ~/.claude/registry/candidates/. Keyword
+shortcuts for MATCH are in ~/.claude/registry/TRIGGERS.md. Carry this
+directive into every subagent brief. First run on this machine? Run the
+environment-bootstrap skill to tailor this config to your stack.
 EOF
 if [ -r "$REGISTRY" ]; then
   echo "--- REGISTRY INDEX ($(grep -c '^|' "$REGISTRY") rows) ---"

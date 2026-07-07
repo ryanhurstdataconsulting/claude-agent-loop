@@ -108,7 +108,10 @@ AAA_RECS = [
      "message": {"role": "user", "content": "thanks"}},
 ]
 
-# --- agent-bbb: the bare-announce fixture (lands in the 2026-07 shard) -------
+# --- agent-bbb: the un-announced fixture (lands in the 2026-07 shard) --------
+# No Resource Loop line at all (announce_found False), so the session-backfill
+# enriches it. A bare announce is a DIFFERENT case, exercised in
+# TestBareNotBackfilled — a bare subagent is never backfilled.
 BBB_RECS = [
     {"type": "user", "sessionId": SID, "gitBranch": "main",
      "timestamp": "2026-07-02T10:00:00.000Z",
@@ -119,9 +122,7 @@ BBB_RECS = [
                  "usage": {"input_tokens": 10, "output_tokens": 2,
                            "cache_read_input_tokens": 0,
                            "cache_creation_input_tokens": 0},
-                 "content": [{"type": "text", "text":
-                              "Resource Loop — no registry match; "
-                              "proceeding bare."}]}},
+                 "content": [{"type": "text", "text": "working on it"}]}},
     {"type": "assistant", "sessionId": SID, "gitBranch": "main",
      "timestamp": "2026-07-02T10:00:02.000Z",
      "message": {"role": "assistant", "model": "claude-sonnet-4", "id": "n1",
@@ -293,13 +294,13 @@ class TestTaskRecord(HarvestFixture):
         self.assertEqual(len(read_shard_records(self.metrics, "2026-06")), 1)
 
 
-class TestBareAndDedup(HarvestFixture):
-    def test_bare_announce_and_july_shard(self):
+class TestUnannouncedAndDedup(HarvestFixture):
+    def test_unannounced_and_july_shard(self):
         emitted = hm.harvest(str(self.bbb), "SubagentStop", str(self.metrics))
         rec = emitted[0]
         self.assertEqual(rec["task_id"], "agent-bbb")
-        self.assertTrue(rec["bare"])
-        self.assertTrue(rec["announce_found"])
+        self.assertFalse(rec["bare"])           # no Resource Loop line at all
+        self.assertFalse(rec["announce_found"])
         self.assertEqual(rec["resources_deployed"], [])
         self.assertEqual(rec["tests"]["detected"], False)
         self.assertEqual(rec["tools"], {"Read": 1})
@@ -402,8 +403,8 @@ class TestSessionRollup(HarvestFixture):
     def test_session_backfill_enriches_unannounced_tasks(self):
         # C1: a session that announced (token-efficiency) + two subagents,
         # one that announced its own resources (agent-aaa) and one that did
-        # not (agent-bbb, a bare announce => empty). SessionEnd must backfill
-        # only the un-announced task, via a last-wins replacement record.
+        # not announce at all (agent-bbb, un-announced => empty). SessionEnd
+        # must backfill only the un-announced task, via a last-wins replacement.
         hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
         recs = all_records(self.metrics)
 
@@ -419,7 +420,7 @@ class TestSessionRollup(HarvestFixture):
         self.assertEqual(aaa[-1]["resources_deployed"],
                          ["sports-analyst", "data-visualization"])
 
-        # agent-bbb announced bare (empty) => two records; its LAST record is
+        # agent-bbb was un-announced (empty) => two records; its LAST record is
         # the backfill carrying the session's resources + "session-backfill".
         bbb = [r for r in recs if r["task_id"] == "agent-bbb"]
         self.assertEqual(len(bbb), 2)
@@ -691,6 +692,99 @@ class TestParsingUnits(unittest.TestCase):
         ]
         agg = hm._aggregate(recs)
         self.assertEqual(agg["turns"], 2)
+
+
+class TestBareNotBackfilled(unittest.TestCase):
+    """C (P7 review): a subagent that explicitly announced bare must NOT be
+    session-backfilled — it genuinely deployed nothing, so it must not inherit
+    the session's resources. An un-announced subagent (no Resource Loop line at
+    all) is still backfilled as before. Self-contained: builds its own tree.
+    """
+
+    SESSION = [
+        {"type": "user", "sessionId": "s7", "gitBranch": "main",
+         "timestamp": "2026-07-03T09:00:00.000Z",
+         "message": {"role": "user", "content": "start"}},
+        {"type": "assistant", "sessionId": "s7", "gitBranch": "main",
+         "timestamp": "2026-07-03T09:00:01.000Z",
+         "message": {"role": "assistant", "model": "claude-opus-4-8", "id": "z1",
+                     "usage": {"input_tokens": 10, "output_tokens": 5,
+                               "cache_read_input_tokens": 0,
+                               "cache_creation_input_tokens": 0},
+                     "content": [{"type": "text", "text":
+                                  "Resource Loop — deploying: token-efficiency "
+                                  "(skill) — keep it cheap"}]}},
+    ]
+    # Un-announced subagent: no Resource Loop line at all (announce_found False).
+    UNANN = [
+        {"type": "user", "sessionId": "s7", "gitBranch": "main",
+         "timestamp": "2026-07-03T09:01:00.000Z",
+         "message": {"role": "user", "content": "do work"}},
+        {"type": "assistant", "sessionId": "s7", "gitBranch": "main",
+         "timestamp": "2026-07-03T09:01:01.000Z",
+         "message": {"role": "assistant", "model": "claude-sonnet-4", "id": "u1",
+                     "usage": {"input_tokens": 5, "output_tokens": 3,
+                               "cache_read_input_tokens": 0,
+                               "cache_creation_input_tokens": 0},
+                     "content": [{"type": "text", "text": "working on it"}]}},
+    ]
+    # Bare subagent: explicitly announced no registry match (bare True, empty).
+    BARE = [
+        {"type": "user", "sessionId": "s7", "gitBranch": "main",
+         "timestamp": "2026-07-03T09:02:00.000Z",
+         "message": {"role": "user", "content": "do other work"}},
+        {"type": "assistant", "sessionId": "s7", "gitBranch": "main",
+         "timestamp": "2026-07-03T09:02:01.000Z",
+         "message": {"role": "assistant", "model": "claude-sonnet-4", "id": "b1",
+                     "usage": {"input_tokens": 5, "output_tokens": 3,
+                               "cache_read_input_tokens": 0,
+                               "cache_creation_input_tokens": 0},
+                     "content": [{"type": "text", "text":
+                                  "Resource Loop — no registry match; "
+                                  "proceeding bare."}]}},
+    ]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        root = pathlib.Path(self.tmp)
+        self.metrics = root / "metrics"
+        proj = root / "projects" / "myproj7"
+        self.session_file = proj / "s7.jsonl"
+        self.unann = proj / "s7" / "subagents" / "agent-unann.jsonl"
+        self.bare = proj / "s7" / "subagents" / "agent-bare.jsonl"
+        write_jsonl(self.session_file, self.SESSION)
+        write_jsonl(self.unann, self.UNANN)
+        write_jsonl(self.bare, self.BARE)
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_bare_subagent_not_backfilled_but_unannounced_is(self):
+        hm.harvest(str(self.session_file), "SessionEnd", str(self.metrics))
+        recs = all_records(self.metrics)
+
+        # The un-announced subagent IS backfilled: two records, the last one a
+        # session-backfill carrying the session's resources.
+        unann = [r for r in recs if r["task_id"] == "agent-unann"]
+        self.assertEqual(len(unann), 2)
+        self.assertFalse(unann[0]["announce_found"])
+        self.assertFalse(unann[0]["bare"])
+        self.assertEqual(unann[0]["resources_deployed"], [])
+        self.assertEqual(unann[-1]["resources_source"], "session-backfill")
+        self.assertEqual(unann[-1]["resources_deployed"], ["token-efficiency"])
+
+        # The bare subagent is NOT backfilled: exactly one record, source
+        # "task", resources still empty — no session-backfill re-emit at all.
+        bare = [r for r in recs if r["task_id"] == "agent-bare"]
+        self.assertEqual(len(bare), 1)
+        self.assertTrue(bare[0]["announce_found"])
+        self.assertTrue(bare[0]["bare"])
+        self.assertEqual(bare[0]["resources_deployed"], [])
+        self.assertEqual(bare[0]["resources_source"], "task")
+        backfills = [r for r in recs if r["task_id"] == "agent-bare"
+                     and r.get("resources_source") == "session-backfill"]
+        self.assertEqual(backfills, [])
 
 
 if __name__ == "__main__":

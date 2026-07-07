@@ -27,9 +27,9 @@ HEADER = (
 )
 
 # Two well-formed NEW rows, in file order.
-NEW1 = ("| NEW | 2026-07-06 | 68_playground | slow-intake | "
+NEW1 = ("| NEW | 2026-07-06 | acme-web | slow-intake | "
         "intake re-derived a known answer | 2026-07#task_id=agent-aaa |")
-NEW2 = ("| NEW | 2026-07-05 | 68_challenge_report | flaky-tunnel | "
+NEW2 = ("| NEW | 2026-07-05 | acme-api | flaky-tunnel | "
         "ssh tunnel dropped mid-query | 2026-07#task_id=agent-bbb |")
 
 # Rows that must NOT count.

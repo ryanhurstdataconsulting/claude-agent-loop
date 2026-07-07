@@ -126,7 +126,7 @@ appends one row when a task exposes a recurring signal. One theme per row:
 |---|---|
 | `status` | `NEW` on write. Assessment rewrites it to `PROMOTED:<slug>` or `DISMISSED:<reason>`. |
 | `date` | the task's date, `YYYY-MM-DD`. |
-| `project` | the project slug the task ran in (for example `68_playground`). |
+| `project` | the project slug the task ran in (for example `acme-web`). |
 | `theme-tag` | kebab-case, one concept (`flaky-tunnel`, `slow-intake`, `route-cost-outlier`). Reuse an existing tag when the signal is the same — that is what makes clusters form. |
 | `note` | one line, plain: what recurred and why it matters. |
 | `metrics-ref` | `<shard>#task_id=<id>` — the metric shard month and the task's `task_id` (`2026-07#task_id=agent-abc123`), so the assessment can pull the evidence. |

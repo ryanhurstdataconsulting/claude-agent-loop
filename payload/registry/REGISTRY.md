@@ -7,7 +7,7 @@
      environment-bootstrap skill once to tailor this registry to your machine. -->
 
 ## Superpowers (process)
-| resource-loop | superpower | Start of every session: MATCH → ANNOUNCE → GAP → ROUTE |
+| resource-loop | superpower | Start of every session: MATCH → ANNOUNCE → ROUTE → EXECUTE → SCORE → LEARN |
 | token-efficiency | superpower | Long/high-volume/multi-file task or a subagent fleet — targeted reads, file-handoff, model/effort routing; never at the cost of evidence |
 
 ## Skills (domain)

@@ -1,5 +1,5 @@
 <!-- BEGIN AGENT-LOOP -->
-<!-- Managed block — installed by the claude-agent-loop-starter environment.
+<!-- Managed block — installed by the claude-agent-loop environment.
      Everything between these two sentinels is replaced wholesale on re-install.
      Edit outside the sentinels; anything you add inside will be overwritten.
      Run the environment-bootstrap skill to personalize your setup — it appends
@@ -9,20 +9,36 @@
 ## Applies to every project on this machine, and to every subagent you dispatch.
 
 Before the first task of any session, run the **Resource Loop**
-(skill: `resource-loop`): MATCH → ANNOUNCE → GAP → ROUTE. The SessionStart hook
-injects the registry index inside `<resource-loop>` tags; if it is absent, read
-`~/.claude/registry/REGISTRY.md` directly.
+(skill: `resource-loop`): a closed **MATCH → ANNOUNCE → ROUTE → EXECUTE → SCORE →
+LEARN** loop. The SessionStart hook injects the registry index inside
+`<resource-loop>` tags; if it is absent, read `~/.claude/registry/REGISTRY.md`
+directly.
 
 - **MATCH** the task against the index semantically (task shapes, not keywords).
   Keyword/file-glob shortcuts live in `~/.claude/registry/TRIGGERS.md`.
 - **ANNOUNCE** one line — `Resource Loop — deploying: <name> (<category>) — <reason>`
-  — or `Resource Loop — no registry match; proceeding bare.`
-- **GAP**: a recurring need with no matching resource → file
-  `~/.claude/registry/candidates/YYYY-MM-DD-<slug>.md` and surface it. Creation is
-  gated on your approval — never auto-create.
+  — or `Resource Loop — no registry match; proceeding bare.` Each `<name>` MUST be
+  the exact registry id: this line is a schema contract the metrics harvester
+  parses, so a paraphrase silently breaks the learning loop.
 - **ROUTE** subagents: planning → session model; creation-heavy → `model: opus`;
   mechanical (extraction, sweeps, lint fixes, probes) → `model: sonnet`
   (haiku for trivial probes). Opus creators sub-delegate mechanical subtasks.
+- **EXECUTE** the work. Carry the whole loop — the ANNOUNCE contract, the ROUTE
+  table, and the SCORE duty below — into every subagent brief; a subagent that
+  does not announce and score is a task the loop cannot see.
+- **SCORE** the result at task close, once the objective evidence is in:
+  `python3 ~/.claude/tools/score_task.py --task-id <id> --scale outcome=<level> …`,
+  so the loop has a signal to learn from.
+- **LEARN** — run `python3 ~/.claude/tools/heuristics_eval.py --task-id <id>` over
+  the metric history and act on the top firing: **improve-now** (patch the
+  resource, then commit it through `loop_autocommit.sh` — the sole sanctioned
+  write path), **theme-note** (append one row to
+  `~/.claude/learning/LOOP_THEMES.md`), or **no-action**; then log the decision
+  with `--emit-learn <action> --rule H<id>`.
+
+**GAP (side behavior):** a recurring unmet need with no matching resource → file
+`~/.claude/registry/candidates/YYYY-MM-DD-<slug>.md` and surface it. Creation is
+owner-gated — never auto-create.
 
 **First run:** run `Skill(environment-bootstrap)` once to tailor the registry and
 these directives to your machine, stack, and databases. Lint after any registry
