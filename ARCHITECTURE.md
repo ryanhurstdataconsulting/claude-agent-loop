@@ -178,6 +178,15 @@ record rolls up the main thread and carries `tasks_harvested`; a `compaction`
 record is one line per PreCompact event; `score` and `learn` records (P3 / P6)
 attach a subjective self-score and a heuristic action to an existing task.
 
+A `score` record carries `{task_id, scales, note, resources_deployed, ts_end}`,
+where `task_id` is `agent-<id>` for a subagent's own score or `session-<sid>`
+for main-thread work — a bare session id is normalized to the `session-` prefix
+before it joins, so it lands on the harvester's session rollup rather than
+orphaning — `scales` is the ordinal self-assessment map, `note` is a redacted
+free-text remark, `resources_deployed` is copied from the joined `task` record
+(or, for a `session-*` id with no task record, the joined `session` record), and
+`ts_end` is the score's single timestamp.
+
 **Join.** Records are correlated by `task_id`. A `score` or `learn` record
 shares the `task_id` of the task it annotates, so a consumer joins them on that
 key.

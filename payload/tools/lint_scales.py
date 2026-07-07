@@ -21,8 +21,10 @@ Rules enforced:
   ``## Core (framework seed)`` and ``## Extended (learned on this machine)``.
 * A row that is not four ``|``-delimited cells is a malformed row.
 
-Every error carries the 1-based line number. Exit 0 when clean, 1 otherwise,
-after printing ``lint_scales: OK|FAIL (N error(s))``.
+Every per-row error carries the 1-based line number of the offending row. The
+two whole-file checks — a missing file and the row-budget overflow — have no
+single line to point at and are reported without one. Exit 0 when clean, 1
+otherwise, after printing ``lint_scales: OK|FAIL (N error(s))``.
 """
 import pathlib
 import re

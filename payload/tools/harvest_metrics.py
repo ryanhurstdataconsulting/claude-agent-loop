@@ -66,6 +66,11 @@ BARE_RE = re.compile(r"Resource Loop\s*[%s]\s*no registry match;\s*"
                      r"proceeding bare" % _DASH)
 _REASON_SPLIT = re.compile(r"\s+[%s]\s+" % _DASH)   # " — reason" separator
 _PAREN = re.compile(r"\([^)]*\)")                    # "(category)" to strip
+# A registry-id shape: starts alphanumeric, then lowercase alphanumerics,
+# hyphens, or underscores (underscores admit rows like `google_workspace`).
+# The id list is filtered against this so a stray reason fragment can never be
+# mistaken for a deployed resource.
+_ID_SHAPE = re.compile(r"[a-z0-9][a-z0-9_-]*")
 
 # Test-runner output: pytest ("34 passed, 2 failed"), vitest ("3 passed (4)"),
 # and generic "N passed / N failed" all match these.
@@ -130,14 +135,35 @@ def parse_tests(text):
 
 
 def _resource_names(payload):
-    """Extract redacted resource ids from a `deploying:` payload."""
+    """Extract registry ids from a `deploying:` payload per the ANNOUNCE grammar.
+
+    Grammar (see the resource-loop SKILL ANNOUNCE contract):
+
+    1. Segments are ``;``-separated — one segment per deployment when each
+       carries its own ``— reason``.
+    2. Within a segment, only the text BEFORE the first ``— reason`` separator
+       names resources; the reason tail is dropped FIRST, so a comma inside the
+       reason can never leak a phantom id.
+    3. A ``(category)`` paren group is stripped.
+    4. The remainder is a ``,``-separated id list (the bare form: several ids
+       sharing one reason).
+    5. Each candidate survives only if the WHOLE token matches a registry-id
+       shape, so a stray reason fragment (has spaces) or a secret-shaped token
+       (dots / uppercase) is dropped rather than stored.
+
+    Splitting on ``;`` before the reason split — and dropping the reason before
+    the ``,`` split — is what kills the confirmed phantom where a comma in the
+    reason (``sports-analyst (skill) — insight-first, use-case-driven charts``)
+    used to emit a fake ``use-case-driven charts`` id.
+    """
     names = []
-    for chunk in re.split(r"[;,]", payload):
-        name = _REASON_SPLIT.split(chunk)[0]   # drop the "— reason" tail
-        name = _PAREN.sub("", name)            # drop the "(category)"
-        name = name.strip().strip(".").strip()
-        if name:
-            names.append(_redact(name))
+    for segment in payload.split(";"):
+        head = _REASON_SPLIT.split(segment)[0]   # drop the "— reason" tail
+        head = _PAREN.sub("", head)              # drop the "(category)"
+        for token in head.split(","):
+            token = token.strip().strip(".").strip()
+            if token and _ID_SHAPE.fullmatch(token):
+                names.append(token)
     return names
 
 

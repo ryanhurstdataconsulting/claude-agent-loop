@@ -43,8 +43,20 @@ class TestScoreTask(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
     def _shard(self):
+        # Reads the NEWEST monthly shard only. There is a sub-second window at a
+        # month boundary where a planted record (dated to one _now_iso()) and the
+        # score record (dated to a later _now_iso()) could straddle two shards;
+        # this helper would then see only the score. Accepted: the suite runs far
+        # from month boundaries in practice, and _lookup_resources itself scans
+        # both the previous and current month shards, so the join is unaffected.
         shards = sorted(self.metrics.glob("*.jsonl"))
         return shards[-1] if shards else None
+
+    def _plant_session(self, task_id, resources):
+        hm._append_record(str(self.metrics), {
+            "schema": 1, "kind": "session", "task_id": task_id,
+            "resources_deployed": resources, "ts_end": st._now_iso(),
+        })
 
     def _plant_task(self, task_id, resources):
         hm._append_record(str(self.metrics), {
@@ -75,6 +87,9 @@ class TestScoreTask(unittest.TestCase):
         # the score joins its task on task_id
         tasks = [r for r in recs if r["kind"] == "task"]
         self.assertEqual(s["task_id"], tasks[0]["task_id"])
+        # L4: ts_end is the single score timestamp; the redundant `ts` is gone.
+        self.assertIn("ts_end", s)
+        self.assertNotIn("ts", s)
 
     def test_last_task_record_wins_for_resources(self):
         # store contract: consumers take the LAST record per (task_id, kind)
@@ -92,6 +107,88 @@ class TestScoreTask(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         s = [r for r in _records(self._shard()) if r["kind"] == "score"][0]
         self.assertEqual(s["resources_deployed"], [])
+
+    # --- M1: task_id normalization -------------------------------------------
+
+    def test_bare_task_id_normalized_to_session_and_joins(self):
+        # M1: a bare session id (neither session-* nor agent-*) is main-thread
+        # work; it must be prefixed `session-` so it joins the harvester's
+        # session-<sid> record, and the tool must print a note when it does.
+        self._plant_task("session-abc", ["sports-analyst"])
+        rc, out, err = self._run(self._score_args(
+            "--task-id", "abc", "--scale", "outcome=good"))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("normaliz", out.lower())   # a note is printed
+        s = [r for r in _records(self._shard()) if r["kind"] == "score"][0]
+        self.assertEqual(s["task_id"], "session-abc")
+        self.assertEqual(s["resources_deployed"], ["sports-analyst"])
+
+    def test_agent_task_id_passes_through(self):
+        # M1: an agent-<id> is a subagent's own score — it passes through
+        # unchanged and joins its own task record.
+        self._plant_task("agent-xyz", ["token-efficiency"])
+        rc, out, err = self._run(self._score_args(
+            "--task-id", "agent-xyz", "--scale", "outcome=good"))
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("normaliz", out.lower())   # no note for a valid key
+        s = [r for r in _records(self._shard()) if r["kind"] == "score"][0]
+        self.assertEqual(s["task_id"], "agent-xyz")
+        self.assertEqual(s["resources_deployed"], ["token-efficiency"])
+
+    def test_session_prefixed_task_id_not_double_prefixed(self):
+        # M1: an already-session-* id is left alone (no session-session-...).
+        rc, out, err = self._run(self._score_args(
+            "--task-id", "session-abc", "--scale", "outcome=good"))
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("normaliz", out.lower())
+        s = [r for r in _records(self._shard()) if r["kind"] == "score"][0]
+        self.assertEqual(s["task_id"], "session-abc")
+
+    # --- M2: main-thread resources join the session record -------------------
+
+    def test_main_thread_score_joins_session_record(self):
+        # M2: main-thread resources live on the session rollup, not a task
+        # record. A score for a session-* id with only a kind:"session" record
+        # present must inherit that session's resources_deployed.
+        self._plant_session("session-abc",
+                            ["token-efficiency", "sports-analyst"])
+        rc, _, err = self._run(self._score_args(
+            "--task-id", "session-abc", "--scale", "outcome=good"))
+        self.assertEqual(rc, 0, err)
+        s = [r for r in _records(self._shard()) if r["kind"] == "score"][0]
+        self.assertEqual(s["resources_deployed"],
+                         ["token-efficiency", "sports-analyst"])
+
+    def test_task_record_wins_over_session_record(self):
+        # M2: when both a task and a session record share the id, the task
+        # record still wins.
+        self._plant_session("session-abc", ["session-only"])
+        self._plant_task("session-abc", ["task-wins"])
+        rc, _, err = self._run(self._score_args(
+            "--task-id", "session-abc", "--scale", "outcome=good"))
+        self.assertEqual(rc, 0, err)
+        s = [r for r in _records(self._shard()) if r["kind"] == "score"][0]
+        self.assertEqual(s["resources_deployed"], ["task-wins"])
+
+    # --- T1: argument-error coverage -----------------------------------------
+
+    def test_scale_without_equals_exits_2(self):
+        rc, _, err = self._run(self._score_args(
+            "--task-id", "session-abc", "--scale", "outcomegood"))
+        self.assertEqual(rc, 2)
+        self.assertIn("expected name=level", err)
+
+    def test_score_mode_no_scale_exits_2(self):
+        rc, _, err = self._run(self._score_args("--task-id", "session-abc"))
+        self.assertEqual(rc, 2)
+        self.assertIn("--scale", err)
+
+    def test_new_scale_missing_levels_exits_2(self):
+        rc, _, err = self._run([
+            "--new-scale", "latency", "--applies-to", "t", "--desc", "d",
+            "--scales-file", str(self.scales)])
+        self.assertEqual(rc, 2)
+        self.assertIn("--levels", err)
 
     def test_unknown_scale_exits_2(self):
         rc, _, err = self._run(self._score_args(

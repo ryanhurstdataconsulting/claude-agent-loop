@@ -566,6 +566,41 @@ class TestParsingUnits(unittest.TestCase):
         self.assertEqual(names, ["alpha", "beta"])
         self.assertTrue(found)
 
+    def test_parse_announce_reason_comma_is_no_phantom(self):
+        # L1: the confirmed phantom — a comma INSIDE the reason must not leak a
+        # fake id. Under the grammar the reason tail is dropped before the id
+        # list is split, so only the real id survives.
+        names, found, bare = hm.parse_announce([
+            "Resource Loop — deploying: sports-analyst (skill) — "
+            "insight-first, use-case-driven charts"])
+        self.assertEqual(names, ["sports-analyst"])
+        self.assertTrue(found)
+        self.assertFalse(bare)
+
+    def test_parse_announce_multi_deploy_semicolon_with_reasons(self):
+        # The multi-deploy form: one segment per deployment, semicolon-joined,
+        # each with its own "— reason" (a reason may itself contain a comma).
+        names, found, bare = hm.parse_announce([
+            "Resource Loop — deploying: sports-analyst (skill) — charts, plots;"
+            " token-efficiency (skill) — fast, cheap"])
+        self.assertEqual(names, ["sports-analyst", "token-efficiency"])
+        self.assertTrue(found)
+        self.assertFalse(bare)
+
+    def test_parse_announce_bare_comma_id_list(self):
+        # The comma form is reserved for a bare id list sharing one reason.
+        names, found, bare = hm.parse_announce([
+            "Resource Loop — deploying: alpha, beta, gamma — one shared reason"])
+        self.assertEqual(names, ["alpha", "beta", "gamma"])
+        self.assertTrue(found)
+        self.assertFalse(bare)
+
+    def test_parse_announce_underscore_id_kept(self):
+        # Registry ids may carry underscores (e.g. google_workspace).
+        names, _, _ = hm.parse_announce([
+            "Resource Loop — deploying: google_workspace (mcp) — sheets"])
+        self.assertEqual(names, ["google_workspace"])
+
     def test_parse_announce_single(self):
         names, found, bare = hm.parse_announce([
             "chatter first",
@@ -592,13 +627,14 @@ class TestParsingUnits(unittest.TestCase):
         self.assertEqual(names, ["first-one"])
         self.assertFalse(bare)
 
-    def test_announce_name_is_redacted(self):
-        # A stored resource name is passed through redact() — a JWT-shaped
-        # token in the name must not survive into the record.
+    def test_announce_non_id_token_dropped_by_shape_gate(self):
+        # L1: the id-shape gate drops any token that is not a registry id — a
+        # JWT-shaped token (dots, mixed case) never matches, so it is dropped
+        # entirely rather than stored. No secret (redacted or otherwise) lands
+        # in the record.
         names, _, _ = hm.parse_announce([
             "Resource Loop — deploying: eyJabc.def.ghi (skill)"])
-        self.assertEqual(len(names), 1)
-        self.assertIn("[REDACTED", names[0])
+        self.assertEqual(names, [])
 
     def test_parse_tests_both_counts(self):
         self.assertEqual(hm.parse_tests("34 passed, 2 failed in 1.2s"),

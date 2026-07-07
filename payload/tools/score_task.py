@@ -9,12 +9,16 @@ its task by ``task_id``.
 Two modes:
 
 * **score** (default): ``--task-id <id>`` plus one or more
-  ``--scale name=level`` pairs. Each pair is validated against SCALES.md — an
-  unknown scale or an unknown level for a known scale exits 2 (the valid levels
-  are printed). An optional ``--note`` is scrubbed through
-  ``distill_transcripts.redact()`` before storage. ``resources_deployed`` is
-  copied from the LAST task record for that ``task_id`` in the current and
-  previous month shards (the store's last-wins join), else an empty list.
+  ``--scale name=level`` pairs. The task id is normalized to the harvester's
+  join keys — ``agent-<id>`` (a subagent's own score) and ``session-*`` pass
+  through, but a bare id is main-thread work and is prefixed ``session-`` (a
+  note is printed). Each pair is validated against SCALES.md — an unknown scale
+  or an unknown level for a known scale exits 2 (the valid levels are printed).
+  An optional ``--note`` is scrubbed through ``distill_transcripts.redact()``
+  before storage. ``resources_deployed`` is copied from the LAST task record
+  for that ``task_id`` in the current and previous month shards (the store's
+  last-wins join); for a ``session-*`` id with no task record it falls back to
+  the LAST session record, else an empty list.
 
 * **--new-scale**: ``--new-scale <id> --levels "a>b>c" --applies-to "<text>"
   --desc "<text>"`` appends a row under ``## Extended (learned on this
@@ -52,14 +56,38 @@ def _month_keys_now():
     return [prev, now.strftime("%Y-%m")]
 
 
-def _lookup_resources(metrics_dir, task_id):
-    """resources_deployed from the LAST task record for task_id (else []).
+def _normalize_task_id(task_id):
+    """Return ``(normalized_id, note_or_None)`` for a --task-id.
 
-    Scans the previous then current month shard, so a later record supersedes
-    an earlier one — the store's last-wins-per-(task_id, kind) contract.
+    Main-thread work is scored with a bare session id, but the harvester keys
+    the main session rollup ``session-<sid>`` (and a subagent's own task record
+    ``agent-<id>``). A --task-id that is already ``session-*`` or ``agent-*``
+    passes through untouched; anything else is main-thread work and is prefixed
+    ``session-`` so the score joins the session rollup. The returned note is
+    printed by the caller when a normalization happened.
+    """
+    if task_id.startswith("session-") or task_id.startswith("agent-"):
+        return task_id, None
+    norm = "session-%s" % task_id
+    note = ("score_task: normalized --task-id %r to %r "
+            "(main-thread work joins the session record)" % (task_id, norm))
+    return norm, note
+
+
+def _lookup_resources(metrics_dir, task_id):
+    """resources_deployed joined to a score on task_id (else []).
+
+    Scans the previous then current month shard in order, so a later record
+    supersedes an earlier one — the store's last-wins-per-(task_id, kind)
+    contract. The LAST ``kind:"task"`` record for task_id is preferred. A
+    main-thread score carries a normalized ``session-*`` id for which there is
+    usually no task record, so the LAST ``kind:"session"`` record with the same
+    task_id is used as a fallback. A task record still wins when both exist.
     """
     import json
-    found = []
+    task_found = None       # last task record's resources (None = none seen)
+    session_found = None    # last session record's resources (None = none seen)
+    want_session = task_id.startswith("session-")
     for key in _month_keys_now():
         shard = pathlib.Path(metrics_dir) / ("%s.jsonl" % key)
         if not shard.is_file():
@@ -71,9 +99,18 @@ def _lookup_resources(metrics_dir, task_id):
                 rec = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if rec.get("kind") == "task" and rec.get("task_id") == task_id:
-                found = rec.get("resources_deployed") or []
-    return list(found)
+            if rec.get("task_id") != task_id:
+                continue
+            kind = rec.get("kind")
+            if kind == "task":
+                task_found = rec.get("resources_deployed") or []
+            elif kind == "session" and want_session:
+                session_found = rec.get("resources_deployed") or []
+    if task_found is not None:
+        return list(task_found)
+    if session_found is not None:
+        return list(session_found)
+    return []
 
 
 def _score(args):
@@ -98,25 +135,27 @@ def _score(args):
             return 2
         chosen[name] = level
 
+    task_id, id_note = _normalize_task_id(args.task_id)
+    if id_note:
+        print(id_note)
+
     note = dt.redact(args.note)[0] if args.note else ""
-    ts = _now_iso()
     record = {
         "schema": SCHEMA,
         "kind": "score",
-        "task_id": args.task_id,
+        "task_id": task_id,
         "session_id": args.session_id,
         "project": args.project,
-        "ts": ts,
-        # ts_end mirrors ts solely so the shared _append_record shard-router
-        # (which keys the monthly shard off ts_end) files this score correctly.
-        "ts_end": ts,
+        # ts_end is the score's single timestamp; the shared _append_record
+        # shard-router keys the monthly shard off ts_end.
+        "ts_end": _now_iso(),
         "scales": chosen,
         "note": note,
-        "resources_deployed": _lookup_resources(args.metrics_dir, args.task_id),
+        "resources_deployed": _lookup_resources(args.metrics_dir, task_id),
     }
     hm._append_record(args.metrics_dir, record)
     print("score_task: recorded score for task %r: %s"
-          % (args.task_id,
+          % (task_id,
              ", ".join("%s=%s" % kv for kv in chosen.items())))
     return 0
 
@@ -150,6 +189,12 @@ def _insert_extended_row(text, row):
 
 
 def _new_scale(args):
+    # Every failure path here exits 2, not 1. Exit 2 is this tool's "the request
+    # was refused / malformed" code (bad args, duplicate id, missing section, a
+    # post-append lint failure that was reverted) — it means nothing was
+    # committed. That is deliberately distinct from lint_scales.main's exit 1,
+    # which reports "an existing file has lint errors." A caller can therefore
+    # tell "score_task declined to act" (2) from "the scales file is dirty" (1).
     scales_path = pathlib.Path(args.scales_file)
     if not (args.levels and args.applies_to and args.desc):
         print("score_task: --new-scale requires --levels, --applies-to, "
@@ -188,8 +233,9 @@ def _build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Note: this tool only writes the record / edits the scales file. "
                "Committing the change is the loop's autocommit duty (P5).")
-    ap.add_argument("--task-id", help="the task's join key (required to score); "
-                    "use the session id for main-thread work")
+    ap.add_argument("--task-id", help="the task's join key (required to score): "
+                    "session-<session-id> for main-thread work, agent-<id> for "
+                    "a subagent's own score. A bare id is prefixed 'session-'.")
     ap.add_argument("--scale", action="append", default=None,
                     metavar="name=level",
                     help="a self-score, e.g. outcome=good (repeatable)")

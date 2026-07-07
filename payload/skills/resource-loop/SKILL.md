@@ -24,9 +24,14 @@ is absent (hook failure, subagent context), read
    `Resource Loop — no registry match; proceeding bare.`
    **This line is a schema contract, not just chatter.** The metrics harvester
    parses it for per-resource attribution, so each deployed `<name>` MUST be the
-   exact registry id, and multiple deployments MUST be comma-separated. A
-   paraphrased or misspelled name silently breaks the learning loop — the score
-   you record later cannot be tied back to the resource.
+   exact registry id. When several resources each carry their own reason,
+   SEMICOLON-separate the deployments
+   (`a (skill) — reason-a; b (tool) — reason-b`): the harvester treats each
+   `;` segment as one deployment and drops everything after its `— reason`. The
+   COMMA form is reserved for a bare id list that shares one reason
+   (`a, b, c — shared reason`). A paraphrased or misspelled name silently breaks
+   the learning loop — the score you record later cannot be tied back to the
+   resource.
 3. **ROUTE** — when dispatching subagents:
    | Work type | Model |
    |---|---|
@@ -45,11 +50,14 @@ is absent (hook failure, subagent context), read
        --scale outcome=<level> [--scale ui=<level>] \
        [--scale rework=<level>] [--scale evidence=<level>] [--note "…"]
    ```
-   Score the core scales that apply plus any applicable Extended scale. Use the
-   session id as `--task-id` for main-thread work; subagent task records are
-   keyed `agent-<id>` and are backfilled automatically, so score those by their
-   agent id. When a niche quality dimension recurs and no scale fits, extend the
-   registry rather than forcing a poor match:
+   Score the core scales that apply plus any applicable Extended scale. Pass
+   `--task-id session-<session-id>` for main-thread work — the harvester keys
+   the main session rollup `session-<sid>`, so a bare session id would orphan
+   the score (score_task prefixes a bare id with `session-` for you and prints a
+   note, but pass it explicitly). Pass `--task-id agent-<id>` for a subagent's
+   own score; subagent task records are keyed `agent-<id>` and are backfilled
+   automatically. When a niche quality dimension recurs and no scale fits, extend
+   the registry rather than forcing a poor match:
    `score_task.py --new-scale <id> --levels "best>worst" --applies-to "…" --desc "…"`.
    Read `~/.claude/learning/SCALES.md` for the current scales.
 6. **LEARN** — *placeholder.* P6 wires the heuristics engine in here; until
