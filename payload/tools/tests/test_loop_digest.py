@@ -218,6 +218,52 @@ class TestNudge(unittest.TestCase):
         self.assertEqual(out.strip(), "")
 
 
+class TestUnpushed(unittest.TestCase):
+    """BI4: the unpushed count must follow the current branch's upstream, not a
+    hardcoded origin/main..main (which is wrong/zero on a feature branch)."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        self.base = pathlib.Path(self.td.name)
+
+    def _git(self, repo, *args):
+        import subprocess
+        return subprocess.run(["git", "-C", str(repo), *args],
+                              capture_output=True, text=True)
+
+    def test_unpushed_uses_feature_branch_upstream(self):
+        import subprocess
+        remote = self.base / "remote.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)])
+        work = self.base / "work"
+        work.mkdir()
+        self._git(work, "init", "-q")
+        self._git(work, "config", "user.email", "t@e.co")
+        self._git(work, "config", "user.name", "t")
+        self._git(work, "commit", "--allow-empty", "-qm", "c0")
+        # A FEATURE branch (not main) tracking origin/feature.
+        self._git(work, "checkout", "-q", "-b", "feature")
+        self._git(work, "remote", "add", "origin", str(remote))
+        self._git(work, "push", "-q", "-u", "origin", "feature")
+        # Two commits ahead of the upstream.
+        self._git(work, "commit", "--allow-empty", "-qm", "c1")
+        self._git(work, "commit", "--allow-empty", "-qm", "c2")
+        # Old code hardcoded origin/main..main → main is absent → None (RED).
+        self.assertEqual(ld._unpushed(work), "2")
+
+    def test_unpushed_none_without_upstream(self):
+        import subprocess
+        solo = self.base / "solo"
+        solo.mkdir()
+        self._git(solo, "init", "-q")
+        self._git(solo, "config", "user.email", "t@e.co")
+        self._git(solo, "config", "user.name", "t")
+        self._git(solo, "commit", "--allow-empty", "-qm", "c0")
+        # No upstream configured → n/a signal (None).
+        self.assertIsNone(ld._unpushed(solo))
+
+
 class TestNeverPushes(unittest.TestCase):
     """The tool may DISPLAY a manual push command but must never EXECUTE one."""
 

@@ -8,8 +8,8 @@ the periodic review surface. It reads the auto-change ledger
 renders a dated markdown digest under ``learning/digests/YYYY-MM-DD.md`` with:
 
 * **auto-commits** grouped by repo (sha, subject, rule-id), each with an
-  ``unpushed`` count (``git rev-list origin/main..main --count`` when a remote
-  exists, else ``n/a``);
+  ``unpushed`` count (``git rev-list @{u}..HEAD --count`` against the current
+  branch's upstream, whatever branch it is on, else ``n/a``);
 * **blocked attempts** — the ``autocommit-blocked`` theme rows still ``NEW``;
 * **theme transitions** — the current NEW / PROMOTED / DISMISSED row counts;
 * a **metrics summary** for the current month shard (task count, mean
@@ -176,11 +176,30 @@ def metrics_summary(metrics_dir, month):
 # --- unpushed count ---------------------------------------------------------
 
 def _unpushed(repo_root):
-    """origin/main..main commit count, or None if there is no remote/branch."""
+    """Commits on the current branch not yet on its upstream, or None.
+
+    Resolves the current branch's upstream (e.g. ``origin/feature-x``) with
+    ``@{u}`` and counts ``@{u}..HEAD`` — correct on any branch, not just
+    ``main``. Returns None only when there is genuinely no upstream (the ``n/a``
+    signal), so a feature-branch loop commit reports a real count rather than a
+    hardcoded ``origin/main..main`` that is wrong or zero off ``main``.
+    """
+    try:
+        up = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref",
+             "--symbolic-full-name", "@{u}"],
+            capture_output=True, text=True)
+    except OSError:
+        return None
+    if up.returncode != 0:
+        return None
+    upstream = up.stdout.strip()
+    if not upstream:
+        return None
     try:
         res = subprocess.run(
             ["git", "-C", str(repo_root), "rev-list",
-             "origin/main..main", "--count"],
+             "%s..HEAD" % upstream, "--count"],
             capture_output=True, text=True)
     except OSError:
         return None

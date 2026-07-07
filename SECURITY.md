@@ -41,6 +41,33 @@ skill walks you through it:
 - if the database is behind a bastion: your own SSH key and account, and an open
   tunnel (`ssh-tunnel-keepalive`).
 
+## Autonomy residual risks
+
+The loop's auto-write path (`loop_autocommit.sh`) is gated hard — path, content,
+and commit-message channels all pass the visibility classifier and the scrub
+gate before anything lands. Two residual risks remain by design, documented here
+so the owner reviews with them in mind.
+
+1. **Marker matching is exact, case-folded substring matching.** The visibility
+   classifier flags a framework-bound change as CLIENT only when a literal
+   marker from `CLIENT_MARKERS.txt` appears, case-insensitively, in the path,
+   the content, or the commit message. An identifier that is not on the list, or
+   one that is encoded, split across a boundary, or spelled with look-alike
+   characters, can still classify GENERIC and slip through. The compensating
+   controls are the mandatory human diff review at `loop_promote` before any
+   learned change is generalized into a shipped seed, and the manual
+   push-at-digest checkpoint — the tool never pushes, so nothing reaches a
+   remote until the owner runs the publish command by hand. Keep
+   `CLIENT_MARKERS.txt` curated: every real client, product, host, codename, and
+   personal identifier belongs on it.
+
+2. **Notifications are best-effort and macOS-only.** `_notify` uses `osascript`
+   with no `terminal-notifier` fallback, and it is a silent no-op off macOS or
+   when `osascript` is absent. A gate block or a partial commit still records
+   its evidence in `LOOP_THEMES.md` and `AUTO_COMMITS.log`, so a missed desktop
+   notification never hides a blocked or partial change — the digest surfaces it
+   at review.
+
 ## Verify it yourself
 
 ```bash

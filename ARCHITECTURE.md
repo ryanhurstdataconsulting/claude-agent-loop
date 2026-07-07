@@ -252,29 +252,56 @@ first, then local — each subject suffixed `[framework]` / `[local]`.
 **Gate order** (all gates run BEFORE any commit lands, so an abort leaves both
 repos exactly as they were):
 
-0. **Gated lane** — `settings.json`, any `hooks/*.sh`, or a `CLAUDE.md` sentinel
-   block are REFUSED (exit 4). These stay owner-approved through a
-   `registry/candidates/` stub; no flag overrides the refusal.
+0. **Gated lane** — REFUSED (exit 4), routed to a `registry/candidates/` stub,
+   with no override flag. This covers both the INSTALLED artifacts (a `~/.claude`
+   `settings*.json`, any `hooks/` path, a `CLAUDE.md` sentinel block) and the
+   framework SOURCES that become them on install: any path under a `fragments/`
+   directory (catching `settings.fragment.json` and `CLAUDE.starter.md`), any
+   `settings*.json` basename anywhere, and any path under a `hooks/` directory
+   regardless of extension (a `hooks/*.py` or an extensionless hook is refused
+   too).
 1. **`classify_visibility.py`** — every framework-bound path must classify
    GENERIC. A CLIENT marker (from `learning/CLIENT_MARKERS.txt`) or a structural
    risk signal (a `/Users/<name>` path, an email, a `user@host`, an IP) aborts
-   (exit 3). A missing markers file fails CLOSED — every input becomes UNSURE.
-   Local-lane paths are exempt (local-only, no remote).
+   (exit 3). A missing OR empty markers file fails CLOSED — every input becomes
+   UNSURE. A framework path that cannot be text-scanned (a NUL-byte binary) is
+   refused as well. Local-lane paths are exempt (local-only, no remote).
 2. **`secret_pii_scrub_gate.py`** on the explicit paths — any finding aborts.
 3. **`prose_grammar_gate.py`** on any `.md` paths — any finding aborts.
 4. **`lint_registry.py`** (registry paths), **`lint_scales.py`** (`SCALES.md`),
    **`lint_heuristics.py`** (`HEURISTICS.md`, if the P6 tool is present).
+5. **Message channel** — the commit subject and `-b` body are committed content
+   too, so they are scanned, not trusted. For a framework commit the message
+   must classify GENERIC and pass the scrub gate; for a local commit it is
+   scrub-scanned (no remote to leak to, but a secret must not be logged). A
+   CLIENT/UNSURE/finding aborts before anything lands. As a further belt, after
+   `git add` and before the commit the staged index is scrub-scanned once more
+   (a TOCTOU guard against a file mutated mid-flight).
 
 On a gate abort, the affected index is reset (the working tree — the caller's
 edit — is preserved), an `autocommit-blocked` NEW row is appended to
 `LOOP_THEMES.md`, an OS notification fires, and the exit is non-zero. On success
-the tool stages the explicit paths only (never `-A`), commits with a `loop:`
+the tool stages the explicit paths only (never `-A`) and commits them with a
+pathspec (`--only`) so any pre-staged entry is left untouched, using a `loop:`
 subject and a `Co-Authored-By: claude-agent-loop autonomy` trailer, and appends
-one line to `learning/AUTO_COMMITS.log`. **It never pushes.**
+one line to `learning/AUTO_COMMITS.log`. Each ledger line carries a trailing
+GROUP id (the framework sha's first eight characters) that both halves of a
+mixed commit share, so a two-lane pair can be rolled back as one unit. **It
+never pushes.**
+
+**Honest two-lane exit codes.** The framework and local commits are as atomic as
+two separate repos allow. If the first (or only) lane's commit fails, nothing
+lands and the exit is non-zero (5). If the framework lane committed but the
+local lane then fails, the tool logs a `PARTIAL` line naming the orphaned
+framework sha, fires a notification, prints a `loop_rollback.sh <sha>` hint, and
+exits non-zero (6). The tool never reports success for a commit that did not
+land.
 
 **Rollback.** `payload/tools/loop_rollback.sh <sha>` (or `--last [N]`) reverts a
-loop commit with `git revert --no-edit`, logging each revert. It REFUSES (exit 4)
-to revert any commit whose subject lacks the `loop:` prefix — human commits are
+loop commit with `git revert --no-edit`, logging each revert. `--last [N]`
+operates on N logical GROUPS, so a mixed two-lane pair (two ledger lines sharing
+one group id) is undone together, newest group first. It REFUSES (exit 4) to
+revert any commit whose subject lacks the `loop:` prefix — human commits are
 never touched — and re-runs the registry/scales linters after a revert as a
 guard (a lint failure is warned, never undoes the revert).
 

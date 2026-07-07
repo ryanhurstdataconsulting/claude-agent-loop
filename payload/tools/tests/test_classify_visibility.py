@@ -37,6 +37,14 @@ def _markers_file(lines):
     return td, p
 
 
+def _comment_only_markers_file():
+    """A present file whose every line is a comment or blank (zero live markers)."""
+    td = tempfile.TemporaryDirectory()
+    p = pathlib.Path(td.name) / "CLIENT_MARKERS.txt"
+    p.write_text("# only a comment mentioning widgetco\n\n   \n", encoding="utf-8")
+    return td, p
+
+
 class TestClassifyCore(unittest.TestCase):
     def test_marker_in_content_is_client(self):
         verdict, detail = cv.classify("we ship to widgetco tomorrow",
@@ -104,6 +112,13 @@ class TestLoadMarkers(unittest.TestCase):
         self.assertIsNone(
             cv.load_markers(pathlib.Path("/nonexistent/CLIENT_MARKERS.txt")))
 
+    def test_all_comment_file_returns_none(self):
+        # AI1: a present-but-all-comment/blank file yields zero live markers and
+        # must fail CLOSED exactly like a missing file — return None, not [].
+        td, p = _comment_only_markers_file()
+        self.addCleanup(td.cleanup)
+        self.assertIsNone(cv.load_markers(p))
+
 
 class TestCli(unittest.TestCase):
     def _run(self, argv):
@@ -149,6 +164,19 @@ class TestCli(unittest.TestCase):
         self.assertEqual(rc, 3)
         self.assertIn("UNSURE\t", out)
         self.assertTrue(err.strip(), "expected a warning on stderr")
+
+    def test_empty_markers_file_fails_closed_unsure(self):
+        # AI1: an all-comment markers file (zero live markers) must fail CLOSED
+        # like a missing one. Content carries a would-be marker, yet with no
+        # live markers loaded the verdict must be UNSURE (never GENERIC), with a
+        # loud warning, exit 3.
+        td, p = _comment_only_markers_file()
+        self.addCleanup(td.cleanup)
+        cf = self._clean_file(body="serving widgetco now\n")
+        rc, out, err = self._run(["--markers", str(p), str(cf)])
+        self.assertEqual(rc, 3)
+        self.assertIn("UNSURE\t", out)
+        self.assertTrue(err.strip(), "expected a loud warning on stderr")
 
     def test_text_mode(self):
         td, mp = _markers_file(MARKERS)

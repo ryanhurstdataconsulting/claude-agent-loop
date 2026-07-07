@@ -6,8 +6,12 @@
 #   loop_rollback.sh --last [N]
 #
 # Reverts a single commit by sha (default repo: framework), or the most recent N
-# loop commits recorded in AUTO_COMMITS.log across both repos, newest first.
-# Uses `git revert --no-edit`. It REFUSES (exit 4) to revert any commit whose
+# loop-commit GROUPS recorded in AUTO_COMMITS.log across both repos, newest
+# group first. A mixed two-lane commit writes two ledger lines that share a
+# GROUP id (the 6th tab field); `--last N` operates on N logical GROUPS, so it
+# reverts BOTH halves of such a pair together — a single-lane commit is a group
+# of one. Uses `git revert --no-edit`. It REFUSES (exit 4) to revert any commit
+# whose
 # subject lacks the `loop: ` prefix — human commits are never touched by the
 # loop's rollback. After a revert that touched the registry or SCALES.md, the
 # matching linter is re-run as a guard (a lint failure is WARNED, never
@@ -149,19 +153,46 @@ if [ ! -f "$AUTOLOG" ]; then
   echo "loop_rollback: no AUTO_COMMITS.log at $AUTOLOG — nothing to roll back" >&2
   exit 0
 fi
-# Loop commits only (subject starts 'loop: '); exclude REVERT and other lines.
-# Take the last N such lines, then process newest-first (reverse).
-selected="$(awk -F'\t' '$4 ~ /^loop: /{print}' "$AUTOLOG" | tail -n "$LAST_N")"
+# Loop commits only (subject starts 'loop: '); exclude REVERT/PARTIAL/other
+# lines. Group the loop lines by their GROUP id (6th tab field; legacy 5-field
+# lines fall back to the sha's first 8 chars = a group of one). Select the last
+# N GROUPS by newest appearance, and within each group emit `repo<TAB>sha`
+# newest-line-first. tac is absent on macOS, so the ordering is done in awk.
+selected="$(awk -F'\t' -v N="$LAST_N" '
+  $4 ~ /^loop: / {
+    n++
+    grp = $6
+    if (grp == "") grp = substr($3, 1, 8)
+    line_grp[n]  = grp
+    line_repo[n] = $2
+    line_sha[n]  = $3
+    last_seen[grp] = n
+    if (!(grp in seen)) { seen[grp] = 1; gc++; gname[gc] = grp }
+  }
+  END {
+    # Order group names by last appearance, descending (newest group first).
+    for (i = 1; i <= gc; i++) {
+      max = i
+      for (j = i + 1; j <= gc; j++)
+        if (last_seen[gname[j]] > last_seen[gname[max]]) max = j
+      t = gname[i]; gname[i] = gname[max]; gname[max] = t
+    }
+    take = (N < gc ? N : gc)
+    for (k = 1; k <= take; k++) {
+      g = gname[k]
+      for (idx = n; idx >= 1; idx--)
+        if (line_grp[idx] == g) print line_repo[idx] "\t" line_sha[idx]
+    }
+  }
+' "$AUTOLOG")"
 if [ -z "$(printf '%s' "$selected" | tr -d '[:space:]')" ]; then
   echo "loop_rollback: no loop commits in AUTO_COMMITS.log to roll back" >&2
   exit 0
 fi
-# Reverse to newest-first. tac is absent on macOS; use tail -r or awk.
-reversed="$(printf '%s\n' "$selected" | awk '{a[NR]=$0} END{for(i=NR;i>=1;i--)print a[i]}')"
-printf '%s\n' "$reversed" | while IFS= read -r line; do
+printf '%s\n' "$selected" | while IFS= read -r line; do
   [ -n "$line" ] || continue
-  rbase="$(printf '%s' "$line" | awk -F'\t' '{print $2}')"
-  rsha="$(printf '%s' "$line" | awk -F'\t' '{print $3}')"
+  rbase="$(printf '%s' "$line" | awk -F'\t' '{print $1}')"
+  rsha="$(printf '%s' "$line" | awk -F'\t' '{print $2}')"
   rroot="$(repo_root_for_base "$rbase")" || {
     echo "loop_rollback: unknown repo '$rbase' in log — skipping $rsha" >&2; continue; }
   do_revert "$rroot" "$rsha" lenient || true

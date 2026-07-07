@@ -10,7 +10,8 @@ the framework tree.
 
 **DEFAULT-DENY is the whole design.** A caller MUST treat ``UNSURE`` exactly as
 it treats ``CLIENT`` — route it to a local-only file, never to ``payload/``.
-Fail CLOSED, never open: a missing markers file classifies *every* input
+Fail CLOSED, never open: a missing *or empty* markers file (one that holds zero
+live markers after comments and blanks are stripped) classifies *every* input
 ``UNSURE`` (with a warning), rather than waving everything through as generic.
 
 Rules, per input, in order:
@@ -31,7 +32,7 @@ Output is one machine-readable line per input::
 
 where ``<markers>`` is the comma-joined matched markers for CLIENT, a
 ``structural:<signals>`` tag for UNSURE, ``no-markers-file`` when the markers
-file is missing, or ``-`` for GENERIC.
+file is missing or empty, or ``-`` for GENERIC.
 
 Exit codes: **0** = every input GENERIC · **3** = any input CLIENT or UNSURE
 (the default-deny signal) · **2** = a usage error (no inputs). Stdlib only.
@@ -60,11 +61,14 @@ TEXT_LABEL = "<text>"
 
 
 def load_markers(path):
-    """Return the marker list at ``path``, or ``None`` if the file is missing.
+    """Return the marker list at ``path``, or ``None`` if it yields no markers.
 
     ``None`` is the fail-closed signal: the caller must classify every input
-    ``UNSURE``. One marker per line; blank lines and ``#`` comment lines are
-    dropped (a ``#`` line that merely mentions a marker word never counts).
+    ``UNSURE``. It is returned for BOTH a missing file AND a present file that
+    holds zero live markers after stripping ``#`` comments and blank lines — an
+    empty (or all-comment) markers file must NOT wave every input through as
+    GENERIC. One marker per line; blank lines and ``#`` comment lines are dropped
+    (a ``#`` line that merely mentions a marker word never counts).
     """
     p = pathlib.Path(path)
     try:
@@ -77,6 +81,10 @@ def load_markers(path):
         if not line or line.startswith("#"):
             continue
         markers.append(line)
+    if not markers:
+        # Present but empty after stripping: fail CLOSED, exactly like a missing
+        # file. Returning [] here would classify every input GENERIC (leak-open).
+        return None
     return markers
 
 

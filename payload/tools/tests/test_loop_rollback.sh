@@ -110,6 +110,39 @@ case "$first_revert" in
   *) fail "last: first revert did not reference newest ($first_revert)" ;;
 esac
 
+# --- Case 4 (BI2): a mixed two-lane commit is ONE group → --last 1 reverts both
+# A mixed commit writes two ledger lines (framework + local) sharing a GROUP id
+# (6th tab field). `--last 1` operates on logical GROUPS, so it must revert BOTH
+# halves, not just the newest single line.
+FW="$(new_fw_repo grp)"; H="$(new_home grp)"
+# A local repo living at $H/.claude (basename '.claude' = the logged local repo).
+git -C "$H/.claude" init -q
+git -C "$H/.claude" config user.email test@example.com
+git -C "$H/.claude" config user.name "Test Bot"
+printf 'seed\n' > "$H/.claude/README.md"
+git -C "$H/.claude" add README.md >/dev/null 2>&1
+git -C "$H/.claude" commit -qm init >/dev/null 2>&1
+FL="$(mk_commit "$FW" fwfile.txt 'loop: mixed grp [framework]')"
+LL="$(mk_commit "$H/.claude" locfile.txt 'loop: mixed grp [local]')"
+GID="$(printf '%s' "$FL" | cut -c1-8)"
+LOCB="$(basename "$H/.claude")"
+LOG="$H/.claude/learning/AUTO_COMMITS.log"
+{
+  printf '2026-07-07T00:00:01Z\t%s\t%s\tloop: mixed grp [framework]\t-\t%s\n' "$(basename "$FW")" "$FL" "$GID"
+  printf '2026-07-07T00:00:02Z\t%s\t%s\tloop: mixed grp [local]\t-\t%s\n' "$LOCB" "$LL" "$GID"
+} > "$LOG"
+out="$(run_rb "$H" "$FW" --last 1)"; rc=$?
+[ "$rc" -eq 0 ] && pass "grp: exit 0" || fail "grp: exit $rc — $out"
+# --last 1 = one GROUP = BOTH halves reverted: fwfile.txt AND locfile.txt gone.
+[ ! -f "$FW/fwfile.txt" ] && pass "grp: framework half reverted" || fail "grp: fwfile.txt survived"
+[ ! -f "$H/.claude/locfile.txt" ] && pass "grp: local half reverted" || fail "grp: locfile.txt survived"
+# Both original shas referenced by REVERT lines.
+if grep -q "$FL" "$LOG" && grep -q "$LL" "$LOG"; then
+  pass "grp: both halves logged as reverted"
+else
+  fail "grp: missing REVERT for one half"
+fi
+
 echo "---"
 if [ "$fails" -eq 0 ]; then echo "loop_rollback tests: OK"; else echo "loop_rollback tests: FAIL ($fails)"; fi
 exit "$fails"
