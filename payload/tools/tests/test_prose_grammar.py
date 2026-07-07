@@ -243,5 +243,38 @@ class TestConfidentArticle(unittest.TestCase):
         self.assertIsNone(pg.article_onset_confident("API-side"))
 
 
+class TestYuOnsetCuratedSetRegression(unittest.TestCase):
+    """Regression, 2026-07-07: gating machine-generated UI copy in a
+    downstream project surfaced a false positive.
+
+    The gate flagged the correct rendered copy "A usable v1 shipped quickly
+    beats a perfect margin." and advised "an usable" — a false positive that
+    would have introduced a real grammar error. Root cause: "usable" (yu-sound
+    onset) was missing from _A_WORDS, so the default first-letter-vowel rule
+    fired. The "unanimous" family shared the same gap.
+    """
+
+    def test_yu_onset_words_take_a(self):
+        for word in ("usable", "usably", "usability",
+                     "unanimous", "unanimously", "unanimity"):
+            with self.subTest(word=word):
+                self.assertEqual(pg.article_onset_confident(word), "a")
+                self.assertEqual(pg.indefinite_article(word), "a")
+
+    def test_un_negation_onset_still_takes_an(self):
+        # "unusable" is an /ʌn/ onset — the default vowel rule is already
+        # correct, and the curated set must not swallow it.
+        self.assertEqual(pg.article_onset_confident("unusable"), "an")
+        self.assertEqual(pg.indefinite_article("unusable"), "an")
+
+    def test_gate_passes_the_original_copy_line(self):
+        line = "A usable v1 shipped quickly beats a perfect margin.\n"
+        self.assertEqual(gate.lint_text(line, "copy.txt"), [])
+
+    def test_gate_flags_the_actual_error(self):
+        findings = gate.lint_text("They want an usable build.\n", "copy.txt")
+        self.assertTrue(any("usable" in f for f in findings), findings)
+
+
 if __name__ == "__main__":
     unittest.main()
