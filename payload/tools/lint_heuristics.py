@@ -20,9 +20,15 @@ with:
 * **LAST-REVIEWED** an ISO date (``YYYY-MM-DD``).
 
 H-ids are unique across the whole file (an id stays reserved even after the rule
-is retired). A ``## Retired`` section may follow the active rules; rules under it
-are parsed — so their ids remain reserved and dup-checked — but are NOT required
-to be complete (a retired rule may keep only a note).
+is retired). A ``## Retired`` section and a ``## Planned`` section may follow the
+active rules; rules under either are parsed — so their ids remain reserved and
+dup-checked — but are NOT required to be complete, and are EXEMPT from the
+evaluator-integrity check below (a planned rule has no engine evaluator yet).
+
+Every ACTIVE rule id must have a registered evaluator in ``heuristics_eval``
+(``EVALUABLE_RULES``): a self-added rule id that the engine cannot evaluate FAILS
+lint here, so the loop's autocommit gate refuses it instead of committing a rule
+that would then be silently skipped at eval time.
 
 ``parse_heuristics(path)`` is the lenient extractor the evaluator reuses;
 ``lint(path)`` is the strict validator. Every per-rule error carries the 1-based
@@ -45,8 +51,23 @@ CONFIDENCE_VALUES = {"seed", "low", "medium", "high"}
 _DASH = "—–-"
 RULE_HEADER = re.compile(r"^##\s+(H\w+)\s+[%s]\s+(.+?)\s*$" % _DASH)
 RETIRED_HEADER = re.compile(r"^##\s+Retired\b.*$")
+PLANNED_HEADER = re.compile(r"^##\s+Planned\b.*$")
 FIELD_LINE = re.compile(r"^-\s+([A-Z][A-Z-]*)\s*:\s*(.*)$")
 SECTION = re.compile(r"^##\s+")
+
+
+def _evaluable_rules():
+    """The rule ids the engine can actually evaluate, imported LAZILY from
+    ``heuristics_eval`` (which imports THIS module at load time, so a top-level
+    import would be circular). Returns ``None`` if the engine is unavailable, in
+    which case the evaluator-integrity check degrades to a no-op rather than
+    raising a false positive."""
+    try:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import heuristics_eval as he  # noqa: E402
+        return set(he.EVALUABLE_RULES)
+    except Exception:
+        return None
 
 
 def _iter_lines(text):
@@ -80,7 +101,7 @@ def parse_heuristics(path):
 
     Each dict::
 
-        {"id", "slug", "header_line", "retired" (bool),
+        {"id", "slug", "header_line", "retired" (bool), "planned" (bool),
          "fields": {NAME: value}, "field_lines": {NAME: lineno},
          "field_order": [NAME, ...], "then": <first THEN token or None>}
 
@@ -90,20 +111,25 @@ def parse_heuristics(path):
     path = pathlib.Path(path)
     rules = []
     in_retired = False
+    in_planned = False
     current = None
     for i, line in _iter_lines(path.read_text()):
         mh = RULE_HEADER.match(line)
         if mh:
             current = {
                 "id": mh.group(1), "slug": mh.group(2).strip(),
-                "header_line": i, "retired": in_retired,
+                "header_line": i, "retired": in_retired, "planned": in_planned,
                 "fields": {}, "field_lines": {}, "field_order": [],
                 "then": None,
             }
             rules.append(current)
             continue
         if RETIRED_HEADER.match(line):
-            in_retired = True
+            in_retired, in_planned = True, False   # sections are mutually exclusive
+            current = None
+            continue
+        if PLANNED_HEADER.match(line):
+            in_planned, in_retired = True, False
             current = None
             continue
         if SECTION.match(line):
@@ -136,11 +162,13 @@ def lint(path):
     text = path.read_text()
     errs = []
 
-    # 1. Flag any `## ` heading that is neither a valid rule header nor the
-    #    Retired section marker (a typo'd rule header, an unknown section).
+    # 1. Flag any `## ` heading that is neither a valid rule header nor a
+    #    recognized section marker (Retired / Planned) — a typo'd rule header or
+    #    an unknown section.
     for i, line in _iter_lines(text):
         if SECTION.match(line):
-            if RULE_HEADER.match(line) or RETIRED_HEADER.match(line):
+            if (RULE_HEADER.match(line) or RETIRED_HEADER.match(line)
+                    or PLANNED_HEADER.match(line)):
                 continue
             errs.append("line %d: unknown section header or malformed rule "
                         "header: %r" % (i, line))
@@ -148,6 +176,7 @@ def lint(path):
     rules = parse_heuristics(path)
     ids_seen = {}
     pos = {name: k for k, name in enumerate(REQUIRED_FIELDS)}
+    evaluable = _evaluable_rules()
 
     for r in rules:
         rid, hline = r["id"], r["header_line"]
@@ -159,9 +188,18 @@ def lint(path):
         if not r["slug"]:
             errs.append("line %d: rule %s has no slug" % (hline, rid))
 
-        # Retired rules keep only a reserved id — do not require completeness.
-        if r["retired"]:
+        # Retired and Planned rules keep only a reserved id — do not require
+        # completeness, and are EXEMPT from the evaluator-integrity check.
+        if r["retired"] or r["planned"]:
             continue
+
+        # Every ACTIVE rule must have a registered engine evaluator; a self-added
+        # rule id the engine cannot evaluate is refused here (I2a).
+        if evaluable is not None and rid not in evaluable:
+            errs.append("line %d: rule %s is ACTIVE but has no registered "
+                        "evaluator in heuristics_eval — a new rule id needs an "
+                        "owner code change, or move it to ## Planned"
+                        % (hline, rid))
 
         # Required fields present.
         for f in REQUIRED_FIELDS:

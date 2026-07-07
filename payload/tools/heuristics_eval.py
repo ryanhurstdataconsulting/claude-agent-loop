@@ -14,6 +14,9 @@ CLI
   ``resources_deployed`` (for the per-resource rules) plus every global rule.
 * ``--window`` — a global scan: per-resource rules run for every resource seen,
   global rules run once.
+* ``--session-id <sid>`` — scopes the session-window rule (H4 bare-streak) to the
+  current session; without it, H4 falls back to recent project records and says
+  so in its evidence note.
 * ``--emit-learn <action> --rule <Hid> --task-id <id>`` — append a
   ``kind:"learn"`` record logging the decision the loop took (even a no-action,
   which is stored as positive signal).
@@ -26,10 +29,16 @@ Records are read from the current and previous month shards and **deduped to the
 LAST record per ``(task_id, kind)``** before ANY aggregation — never a raw line
 count (``harvest_metrics`` is append-only and re-emits replacement records). The
 per-resource rules weight attribution by ``resources_source``: a ``"task"``
-record announced its own resources; a ``"session-backfill"`` record inherited
-the session's ANNOUNCE and is therefore COARSE (session granularity, not per
-task). Both are counted, but every backfill evidence row is annotated coarse so
-the reader can discount it — they are never silently treated as equal.
+record announced its own resources (PRECISE); a ``"session-backfill"`` record
+inherited the session's ANNOUNCE and is therefore COARSE (session granularity,
+not per task). Both are counted, but every backfill evidence row is annotated
+coarse so the reader can discount it — they are never silently treated as equal.
+
+Because ``session-backfill`` is the normal ~98% case (subagents rarely announce),
+a per-resource improve-now rule (H1, H7) that fires on coarse-dominated or thin
+evidence is DOWNGRADED to theme-note: the engine emits an ``effective_action``
+(with a ``downgrade_reason``) that the loop acts on, keeping the raw ``action``
+visible. See ``_apply_downgrade`` and the C1 constants below.
 
 Exit codes
 ----------
@@ -57,17 +66,40 @@ import lint_scales as ls  # noqa: E402
 SCHEMA = 1
 ACTIONS = {"improve-now", "theme-note", "no-action"}
 
-# LEARN-step priority: which firing the loop acts on first.
+# LEARN-step priority: which firing the loop acts on first. Priority sorts on
+# the EFFECTIVE action (post-downgrade), never the raw THEN.
 ACTION_PRIORITY = {"improve-now": 0, "theme-note": 1, "no-action": 2}
 CONFIDENCE_RANK = {"high": 0, "medium": 1, "low": 2, "seed": 3}
 
+# --- coarse-evidence downgrade (C1) -----------------------------------------
+# A per-resource improve-now rule (H1, H7) must NOT drive an autonomous
+# improve-now on evidence dominated by session-backfill rows. A backfill row
+# inherited the SESSION's ANNOUNCE; it does NOT establish that the resource ran
+# on that specific task, so it cannot support an autonomous, resource-attributed
+# commit. When a firing's evidence is coarse-dominated OR too thin on precise
+# (resources_source == "task") rows, the engine downgrades improve-now to
+# theme-note. This is engine-authoritative: the SKILL acts on effective_action,
+# so it cannot diverge from this rule.
+MIN_PRECISE_FOR_IMPROVE = 3   # >= this many precise ("task") rows to auto-act
+COARSE_DOMINANCE = 0.5        # coarse/total above this = coarse-dominated
+# The per-resource improve-now rules subject to the downgrade. H4 is EXEMPT: it
+# is a resource-GAP signal (not resource-attributed) and already routes its
+# improve-now to an owner-gated candidate stub, never an autonomous commit.
+DOWNGRADE_RULES = {"H1", "H7"}
+
+# The rule ids the engine can actually evaluate — one per dispatch branch in
+# ``evaluate_rule``. ``lint_heuristics`` imports this set to REFUSE an ACTIVE
+# rule id with no evaluator (a self-added rule would otherwise commit clean then
+# be silently skipped). Keep this in lockstep with ``evaluate_rule``.
+EVALUABLE_RULES = {"H1", "H2", "H3", "H4", "H6", "H7", "H8"}
+
 # Which rules read a per-resource window vs a global task window. H4 is
-# project-scoped (bare-match streak); H5 is skipped (no route-tier/task-shape
-# signal exists in the metrics schema).
+# session-scoped (bare-match streak, falls back to project-recent). H5 is
+# PLANNED (parked in HEURISTICS.md's ## Planned section — no route-tier /
+# task-shape signal in the metrics schema yet) and never reaches the engine.
 PER_RESOURCE = {"H1", "H7", "H8"}
 GLOBAL_TASK = {"H2", "H3", "H6"}
-PROJECT_RULES = {"H4"}
-SKIP_RULES = {"H5"}
+SESSION_RULES = {"H4"}
 
 _OR_MORE = re.compile(r"(\d+)\s+or\s+more")
 _CMP = re.compile(r"(>=|<=|>|<)\s*(\d+(?:\.\d+)?)")
@@ -212,18 +244,63 @@ def _coarse_count(records):
                if r.get("resources_source") == "session-backfill")
 
 
+def _precise_count(records):
+    """Rows whose resources_deployed was announced by the task itself
+    (``resources_source == "task"``) — the only PRECISE per-task attribution.
+    A ``session-backfill`` or an absent source is not precise."""
+    return sum(1 for r in records if r.get("resources_source") == "task")
+
+
+def _apply_downgrade(firing):
+    """Set ``effective_action`` (+ ``downgrade_reason``) on a firing, in place.
+
+    C1 — engine-authoritative coarse-evidence guard. For a per-resource
+    improve-now rule (H1, H7), an autonomous improve-now is downgraded to
+    theme-note when the firing's evidence is coarse-dominated
+    (``coarse/total > COARSE_DOMINANCE``) OR too thin on precise rows
+    (``precise < MIN_PRECISE_FOR_IMPROVE``). Every other firing — theme-note,
+    no-action, and the EXEMPT H4 improve-now (a resource-GAP signal, already
+    owner-gated) — passes through unchanged. The raw ``action`` is preserved so
+    the reader can see what was downgraded and why.
+    """
+    action = firing["action"]
+    firing["downgrade_reason"] = None
+    if firing["rule"] in DOWNGRADE_RULES and action == "improve-now":
+        precise = firing.get("precise_samples", 0)
+        coarse = firing.get("coarse_samples", 0)
+        total = len(firing.get("evidence") or []) or firing.get("samples", 0)
+        if coarse > COARSE_DOMINANCE * max(1, total):
+            firing["effective_action"] = "theme-note"
+            firing["downgrade_reason"] = ("coarse-dominated: %d/%d backfill"
+                                          % (coarse, total))
+            return
+        if precise < MIN_PRECISE_FOR_IMPROVE:
+            firing["effective_action"] = "theme-note"
+            firing["downgrade_reason"] = (
+                "insufficient precise samples: %d<%d"
+                % (precise, MIN_PRECISE_FOR_IMPROVE))
+            return
+    firing["effective_action"] = action
+
+
 # --- rule evaluators (each returns a firing dict or None) -------------------
 
 def _eval_mean(rule, population, metric, scope):
     """H1 (per-resource error_rate) and H6 (global cache_efficiency): a mean over
-    the most recent window compared to the threshold."""
+    the most recent window compared to the threshold.
+
+    M1: records MISSING the metric are EXCLUDED (not coerced to 0) — so an
+    absent ``cache_efficiency`` no longer drags H6's mean below its floor and
+    spuriously fires.
+    """
     comparator, threshold = parse_threshold(rule["fields"]["THRESHOLD"])
     window, explicit_min = parse_window(rule["fields"]["WINDOW"])
-    win = population[-window:] if window else list(population)
+    present = [r for r in population if r.get(metric) is not None]
+    win = present[-window:] if window else present
     need = _min_samples(window, explicit_min)
     if len(win) < need:
         return None
-    vals = [float(r.get(metric, 0) or 0) for r in win]
+    vals = [float(r.get(metric)) for r in win]
     mean = sum(vals) / len(vals)
     if not _cmp(mean, comparator, threshold):
         return None
@@ -232,18 +309,19 @@ def _eval_mean(rule, population, metric, scope):
         "metric": metric, "computed": round(mean, 4),
         "comparator": comparator, "threshold": threshold,
         "samples": len(win), "window": window, "min_samples": need,
-        "coarse_samples": _coarse_count(win),
-        "evidence": [_ev_row(r, round(float(r.get(metric, 0) or 0), 4))
-                     for r in win],
+        "coarse_samples": _coarse_count(win), "precise_samples": _precise_count(win),
+        "evidence": [_ev_row(r, round(float(r.get(metric)), 4)) for r in win],
     }
 
 
 def _eval_interrupt(rule, tasks):
     """H2 interrupt-pressure (global): the share of recent tasks the user
-    interrupted, over the window."""
+    interrupted, over the window. M1: records MISSING ``interrupted`` are
+    excluded from the ratio's denominator, not coerced to 0."""
     comparator, threshold = parse_threshold(rule["fields"]["THRESHOLD"])
     window, explicit_min = parse_window(rule["fields"]["WINDOW"])
-    win = tasks[-window:] if window else list(tasks)
+    present = [r for r in tasks if r.get("interrupted") is not None]
+    win = present[-window:] if window else present
     need = _min_samples(window, explicit_min)
     if len(win) < need:
         return None
@@ -256,7 +334,7 @@ def _eval_interrupt(rule, tasks):
         "metric": "interrupted", "computed": round(ratio, 4),
         "comparator": comparator, "threshold": threshold,
         "samples": len(win), "window": window, "min_samples": need,
-        "coarse_samples": _coarse_count(win),
+        "coarse_samples": _coarse_count(win), "precise_samples": _precise_count(win),
         "evidence": [_ev_row(r, r.get("interrupted", 0) or 0) for r in win],
     }
 
@@ -294,6 +372,7 @@ def _eval_test_fail_streak(rule, tasks):
         "comparator": ">=", "threshold": int(count),
         "samples": len(win), "window": window, "min_samples": need,
         "coarse_samples": _coarse_count(run_tasks),
+        "precise_samples": _precise_count(run_tasks),
         "evidence": [_ev_row(r, (r.get("tests") or {}).get("failed", 0))
                      for r in run_tasks],
     }
@@ -301,7 +380,15 @@ def _eval_test_fail_streak(rule, tasks):
 
 def _eval_rework_signal(rule, population, scores, scope):
     """H7 rework-signal (per-resource): scored tasks whose self-scored rework
-    came back major, over the last N scored tasks that deployed the resource."""
+    came back major, over the last N scored tasks that deployed the resource.
+
+    ``population`` is the resource's own ``kind:"task"`` records, so each major
+    evidence row IS the joined task record and carries its ``resources_source``
+    directly — a score inherits its task's attribution (C1). A hypothetical
+    score with no matching task record never enters this population, so it is
+    coarse by omission. precise/coarse for the downgrade are computed over the
+    ``majors`` — the specific tasks the improve-now would be predicated on.
+    """
     _cmp_op, count = parse_threshold(rule["fields"]["THRESHOLD"])
     window, explicit_min = parse_window(rule["fields"]["WINDOW"])
     scored = [r for r in population if scores.get(r.get("task_id"))]
@@ -320,6 +407,7 @@ def _eval_rework_signal(rule, population, scores, scope):
         "comparator": ">=", "threshold": int(count),
         "samples": len(win), "window": window, "min_samples": need,
         "coarse_samples": _coarse_count(majors),
+        "precise_samples": _precise_count(majors),
         "evidence": [_ev_row(r, "rework=major") for r in majors],
     }
 
@@ -356,39 +444,56 @@ def _eval_positive_streak(rule, population, scores, outcome_order, scope):
         "comparator": ">=", "threshold": int(count),
         "samples": len(win), "window": window, "min_samples": need,
         "coarse_samples": _coarse_count(run_tasks),
+        "precise_samples": _precise_count(run_tasks),
         "evidence": [_ev_row(r, "outcome>=good,rework=none") for r in run_tasks],
     }
 
 
-def _eval_bare_streak(rule, records, project):
-    """H4 bare-match-streak (project-scoped): repeated "proceeding bare"
-    announcements of a similar shape (approximated by project) — improve-now,
-    but the LEARN step files a candidates/ stub rather than auto-creating."""
+def _eval_bare_streak(rule, records, project, session_id):
+    """H4 bare-match-streak (session-scoped): repeated "proceeding bare"
+    announcements — improve-now, but the LEARN step files a candidates/ stub
+    rather than auto-creating (owner-gated, so EXEMPT from the C1 downgrade).
+
+    When a ``session_id`` is supplied the streak is counted within that session
+    only. Without one, it falls back to recent records for the task's project
+    and annotates the firing "no session context — project-recent".
+    """
     _cmp_op, count = parse_threshold(rule["fields"]["THRESHOLD"])
-    bare = [r for r in records if r.get("bare")
-            and (project is None or r.get("project") == project)]
+    if session_id is not None:
+        bare = [r for r in records
+                if r.get("bare") and r.get("session_id") == session_id]
+        scope = "session=%s" % session_id
+        note = None
+    else:
+        bare = [r for r in records if r.get("bare")
+                and (project is None or r.get("project") == project)]
+        scope = "project=%s" % (project or "*")
+        note = "no session context — project-recent"
     if len(bare) < count:
         return None
-    return {
-        "rule": rule["id"], "action": rule["then"],
-        "scope": "project=%s" % (project or "*"),
+    firing = {
+        "rule": rule["id"], "action": rule["then"], "scope": scope,
         "metric": "bare", "computed": len(bare),
         "comparator": ">=", "threshold": int(count),
         "samples": len(bare), "window": None,
-        "min_samples": int(count), "coarse_samples": 0,
+        "min_samples": int(count), "coarse_samples": 0, "precise_samples": 0,
         "evidence": [_ev_row(r, "proceeding-bare") for r in bare],
     }
+    if note:
+        firing["note"] = note
+    return firing
 
 
 class Ctx(object):
     def __init__(self, tasks, scores, all_records, outcome_order, resources,
-                 project):
+                 project, session_id=None):
         self.tasks = tasks
         self.scores = scores
         self.all_records = all_records
         self.outcome_order = outcome_order
         self.resources = resources
         self.project = project
+        self.session_id = session_id
 
 
 def evaluate_rule(rule, ctx):
@@ -432,13 +537,14 @@ def evaluate_rule(rule, ctx):
                 if f:
                     out.append(f)
         elif hid == "H4":
-            f = _eval_bare_streak(rule, ctx.all_records, ctx.project)
+            f = _eval_bare_streak(rule, ctx.all_records, ctx.project,
+                                  ctx.session_id)
             if f:
                 out.append(f)
-        elif hid in SKIP_RULES:
-            sys.stderr.write("heuristics_eval: %s skipped — no route-tier / "
-                             "task-shape signal in the metrics schema\n" % hid)
         else:
+            # An ACTIVE rule with no evaluator is refused by lint_heuristics
+            # before it can ever reach the engine (see EVALUABLE_RULES); this is
+            # a defensive fallback for an unlinted rulebook only.
             sys.stderr.write("heuristics_eval: no evaluator for rule %s; "
                              "skipped\n" % hid)
     except Exception as exc:                       # advisory: never fatal
@@ -447,6 +553,7 @@ def evaluate_rule(rule, ctx):
     conf = lh._then_token(rule["fields"].get("CONFIDENCE", "")) or "seed"
     for f in out:
         f["confidence"] = conf
+        _apply_downgrade(f)      # sets effective_action + downgrade_reason
     return out
 
 
@@ -456,7 +563,11 @@ def _hid_num(hid):
 
 
 def _priority_key(f):
-    return (ACTION_PRIORITY.get(f["action"], 9),
+    # Priority sorts on the EFFECTIVE (post-downgrade) action, so a coarse
+    # improve-now that was downgraded to theme-note no longer outranks a genuine
+    # firing. Falls back to the raw action if a firing predates the downgrade.
+    action = f.get("effective_action", f.get("action"))
+    return (ACTION_PRIORITY.get(action, 9),
             CONFIDENCE_RANK.get(f.get("confidence", "seed"), 9),
             _hid_num(f["rule"]))
 
@@ -506,16 +617,23 @@ def _render_text(firings):
         return
     top = firings[0]
     print("heuristics_eval: %d rule(s) fired; recommended action: %s (%s)"
-          % (len(firings), top["rule"], top["action"]))
+          % (len(firings), top["rule"], top["effective_action"]))
     for f in firings:
         marker = "  <- recommended" if f is top else ""
+        down = ""
+        if f.get("downgrade_reason"):
+            down = ("  [downgraded from %s: %s]"
+                    % (f["action"], f["downgrade_reason"]))
         print("")
-        print("FIRING  %s (%s)  %s%s"
-              % (f["rule"], f["action"], f["scope"], marker))
+        print("FIRING  %s (%s)  %s%s%s"
+              % (f["rule"], f["effective_action"], f["scope"], down, marker))
         print("  computed: %s  threshold: %s %s  "
-              "(samples %d, window %s, min %d, coarse %d)"
+              "(samples %d, window %s, min %d, precise %d, coarse %d)"
               % (f["computed"], f["comparator"], f["threshold"], f["samples"],
-                 f["window"], f["min_samples"], f["coarse_samples"]))
+                 f["window"], f["min_samples"], f.get("precise_samples", 0),
+                 f["coarse_samples"]))
+        if f.get("note"):
+            print("  note: %s" % f["note"])
         print("  evidence:")
         for e in f["evidence"]:
             tag = "  [coarse: session-backfill]" if e["coarse"] else ""
@@ -561,6 +679,9 @@ def _build_parser():
     ap.add_argument("--task-id", help="evaluate the rules relevant to one task")
     ap.add_argument("--window", action="store_true",
                     help="global scan: every resource + every global rule")
+    ap.add_argument("--session-id",
+                    help="scope the session-window rule (H4) to this session; "
+                         "without it H4 falls back to recent project records")
     ap.add_argument("--metrics-dir",
                     default=str(pathlib.Path.home() / ".claude" / "metrics"))
     ap.add_argument("--heuristics-file",
@@ -590,7 +711,8 @@ def main(argv=None):
                          % hpath)
         return 2
 
-    rules = [r for r in lh.parse_heuristics(hpath) if not r["retired"]]
+    rules = [r for r in lh.parse_heuristics(hpath)
+             if not r["retired"] and not r["planned"]]
     by_kind = load_metrics(args.metrics_dir)
     tasks = _tasks_sorted(by_kind)
     scores = by_kind.get("score", {})
@@ -600,7 +722,8 @@ def main(argv=None):
 
     if args.task_id:
         resources, project = _task_context(by_kind, args.task_id)
-        ctx = Ctx(tasks, scores, all_records, outcome_order, resources, project)
+        ctx = Ctx(tasks, scores, all_records, outcome_order, resources, project,
+                  args.session_id)
         firings = _evaluate(rules, ctx)
         if args.json:
             _render_json(firings, args.task_id)
@@ -610,7 +733,7 @@ def main(argv=None):
 
     if args.window:
         ctx = Ctx(tasks, scores, all_records, outcome_order,
-                  _all_resources(tasks), None)
+                  _all_resources(tasks), None, args.session_id)
         firings = _evaluate(rules, ctx)
         if args.json:
             _render_json(firings, None)

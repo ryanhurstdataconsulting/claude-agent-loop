@@ -243,6 +243,11 @@ part of the system, so the write path is a single, heavily gated tool and the
 whole design is **default-deny**: when in doubt, a change lands in a local-only
 file that has no remote and therefore cannot leak.
 
+**Self-tuning is `HEURISTICS.md`-only.** The LEARN flow may adjust a rule's
+declarative fields in `HEURISTICS.md` (threshold, window, THEN, confidence) or
+retire a rule, but it never edits a tool or any `.py` file — every code change is
+a human change, so the engine's behavior only ever moves under owner review.
+
 **The one write path.** `payload/tools/loop_autocommit.sh` is the ONLY sanctioned
 auto-write. It realpath-resolves each caller-supplied path and routes it to the
 **framework** repo (`~/dev/claude-agent-loop`, published) or the **local** repo

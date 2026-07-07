@@ -63,16 +63,24 @@ is absent (hook failure, subagent context), read
 6. **LEARN** — the loop's closing act. After SCORE, run the heuristics engine
    over the recorded metrics and act on what fired:
    ```
-   python3 ~/.claude/tools/heuristics_eval.py --task-id <id>
+   python3 ~/.claude/tools/heuristics_eval.py --task-id <id> [--session-id <current>]
    ```
-   It reads the rulebook `~/.claude/learning/HEURISTICS.md` against the metrics
-   store and prints every FIRING rule with its computed value, threshold, and
-   evidence rows (each row tagged with its `resources_source`; a
-   `session-backfill` row is flagged coarse). Act on the **highest-priority**
-   firing rule. Priority is `improve-now` > `theme-note` > `no-action`, with ties
-   broken by CONFIDENCE (`high` > `medium` > `low` > `seed`) then H-id order; the
-   engine already sorts its output this way and labels the top one
-   `<- recommended`. The three actions:
+   Pass `--session-id <current>` when you know it — the bare-match-streak rule
+   (H4) counts within the current session and otherwise falls back to recent
+   project records. The engine reads the rulebook
+   `~/.claude/learning/HEURISTICS.md` against the metrics store and prints every
+   FIRING rule with its computed value, threshold, and evidence rows (each row
+   tagged with its `resources_source`; a `session-backfill` row is flagged
+   coarse). **Act on each firing's `effective_action`, never the raw THEN.** The
+   engine downgrades a per-resource improve-now (H1, H7) to theme-note when its
+   evidence is coarse-dominated or thin on precise (`resources_source: "task"`)
+   rows — session-backfill does not establish the resource ran on those specific
+   tasks — and shows the raw `action` plus a `downgrade_reason` alongside. This
+   downgrade is engine-authoritative; do not second-guess it. Act on the
+   **highest-priority** firing. Priority is `improve-now` > `theme-note` >
+   `no-action` (on the effective action), with ties broken by CONFIDENCE
+   (`high` > `medium` > `low` > `seed`) then H-id order; the engine already sorts
+   its output this way and labels the top one `<- recommended`. The three actions:
 
    - **improve-now** — create or patch the implicated resource, then commit it
      through `loop_autocommit.sh` (the ONLY sanctioned write path). Use the
@@ -84,7 +92,12 @@ is absent (hook failure, subagent context), read
      auto-creating: rule **H4** (bare-match-streak — the owner creates the
      resource, never the loop), and any **gated-lane** target (a `settings*.json`,
      a `hooks/` path, a `fragments/` source, or the `CLAUDE.md` sentinel block),
-     which `loop_autocommit.sh` refuses by design.
+     which `loop_autocommit.sh` refuses by design. **If the commit is BLOCKED**
+     (`loop_autocommit.sh` exits 3/4/5/6 — a safety-gate abort, a gated-lane
+     refusal, or a two-lane failure), the improve-now did not happen: record the
+     ACTUAL outcome by logging `--emit-learn theme-note` (below) and file the
+     theme row or candidate stub — never log `improve-now` for a commit that
+     never landed.
    - **theme-note** — append exactly ONE `| NEW | … |` row to
      `~/.claude/learning/LOOP_THEMES.md`, in the format the `theme-assessment`
      skill's "Writing theme rows" section defines (kebab-case `theme-tag`;
@@ -104,10 +117,17 @@ is absent (hook failure, subagent context), read
    and there is nothing to log.
 
    **Tuning the rulebook.** When the evidence warrants, the loop MAY edit its own
-   `HEURISTICS.md` — adjust a THRESHOLD, add a rule, or retire one to the
-   `## Retired` section, bumping the rule's `LAST-REVIEWED` date. Each such edit
-   is itself a `loop_autocommit.sh` commit whose body summarizes the metric
-   evidence generically; the autocommit gate runs
+   `HEURISTICS.md`, but ONLY within these bounds: adjust an EXISTING rule's
+   THRESHOLD value, WINDOW size, THEN, or CONFIDENCE, or retire a rule to the
+   `## Retired` section — always bumping its `LAST-REVIEWED` date. **Do NOT add a
+   new rule id, and do NOT change which metric a rule watches.** The engine binds
+   each metric to its rule by id in code, so a brand-new rule (or a rule pointed
+   at a different metric) is inert until an owner writes its evaluator — and
+   `lint_heuristics.py` now FAILS an active rule id that has no evaluator, so the
+   autocommit gate refuses the commit. A genuinely new rule is an owner code
+   change: file it as a candidate, not an autocommit. Each in-bounds edit is
+   itself a `loop_autocommit.sh` commit whose body summarizes the metric evidence
+   generically; the autocommit gate runs
    `python3 ~/.claude/tools/lint_heuristics.py` for you and blocks on a dirty
    rulebook. At 10 or more unprocessed `NEW` theme rows the SessionStart hook
    nudges you to run `Skill(theme-assessment)` to work the backlog.

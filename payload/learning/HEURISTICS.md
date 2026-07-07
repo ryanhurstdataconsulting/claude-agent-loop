@@ -3,8 +3,9 @@
 Heuristic scoring over recorded metrics. NOT model training. Each rule below
 watches a window of recent task and score records (`~/.claude/metrics/`,
 P2–P3) and fires one of three actions when its threshold is crossed.
-`heuristics_eval.py` (P6) is the engine that reads these rules; until it
-ships, they are a declarative seed the rest of the loop is built against.
+`heuristics_eval.py` (P6) is the live engine that reads these rules: it computes
+each rule's window over the metrics store and reports which fire, so the loop's
+LEARN step can act on the highest-priority firing.
 
 <!-- Rule grammar: one `## H<id> — <slug>` block per rule; H<id> unique.
      Required fields, in order: WHEN, WINDOW, THRESHOLD, THEN, CONFIDENCE,
@@ -37,19 +38,11 @@ ships, they are a declarative seed the rest of the loop is built against.
 
 ## H4 — bare-match-streak
 - WHEN: the ANNOUNCE line reads "proceeding bare" for tasks of a similar shape
-- WINDOW: current session
+- WINDOW: current session (falls back to recent project records when no session context is supplied)
 - THRESHOLD: 3 or more similarly shaped "proceeding bare" announcements
 - THEN: improve-now (files a `registry/candidates/` stub; the loop never auto-creates the resource itself)
 - CONFIDENCE: seed
-- LAST-REVIEWED: 2026-07-06
-
-## H5 — route-cost-outlier
-- WHEN: a task classified as mechanical work is routed to the Opus model tier
-- WINDOW: last 10 tasks
-- THRESHOLD: 2 or more mechanical tasks routed to Opus
-- THEN: theme-note
-- CONFIDENCE: seed
-- LAST-REVIEWED: 2026-07-06
+- LAST-REVIEWED: 2026-07-07
 
 ## H6 — cache-efficiency-floor
 - WHEN: prompt-cache efficiency across recent tasks drops below a healthy floor
@@ -74,3 +67,17 @@ ships, they are a declarative seed the rest of the loop is built against.
 - THEN: no-action (recorded as positive signal; the resource's own alert thresholds are raised as a side effect, not as a separate THEN value)
 - CONFIDENCE: seed
 - LAST-REVIEWED: 2026-07-06
+
+## Planned (not yet computable)
+
+These rules are fully specified but their metric is not in the store yet, so the
+engine parses them as PLANNED and never evaluates them. Their ids stay reserved.
+
+## H5 — route-cost-outlier
+- WHEN: a task classified as mechanical work is routed to the Opus model tier
+- WINDOW: last 10 tasks
+- THRESHOLD: 2 or more mechanical tasks routed to Opus
+- THEN: theme-note
+- CONFIDENCE: seed
+- LAST-REVIEWED: 2026-07-07
+- NOTE: needs a task-shape/route-tier field at ANNOUNCE time — not in the metrics schema yet

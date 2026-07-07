@@ -50,20 +50,36 @@ class TestHeuristicsEval(unittest.TestCase):
     def _task(self, task_id, day, resources=None, error_rate=0.0,
               cache=0.85, interrupted=0, failed=0, source="task"):
         # cache defaults high and error/interrupt/fail default clean so an
-        # isolated rule under test is the only thing that can fire.
-        hm._append_record(str(self.metrics), {
+        # isolated rule under test is the only thing that can fire. Passing
+        # ``cache=None`` OMITS the cache_efficiency field entirely (used to
+        # prove the mean rules exclude records missing the metric — M1).
+        rec = {
             "schema": 1, "kind": "task", "task_id": task_id,
             "project": "demo_project", "ts_end": _ts(day),
             "resources_deployed": resources or [], "resources_source": source,
-            "error_rate": error_rate, "cache_efficiency": cache,
+            "error_rate": error_rate,
             "interrupted": interrupted, "tests": {"failed": failed, "passed": 1},
-        })
+        }
+        if cache is not None:
+            rec["cache_efficiency"] = cache
+        hm._append_record(str(self.metrics), rec)
 
     def _score(self, task_id, day, outcome="good", rework="none"):
         hm._append_record(str(self.metrics), {
             "schema": 1, "kind": "score", "task_id": task_id,
             "project": "demo_project", "ts_end": _ts(day),
             "scales": {"outcome": outcome, "rework": rework},
+        })
+
+    def _bare(self, task_id, day, session_id, project="demo_project"):
+        # A "proceeding bare" announcement record (H4 counts these). Planted as
+        # a kind:"session" row so it never lands in the kind:"task" population
+        # the other rules read.
+        hm._append_record(str(self.metrics), {
+            "schema": 1, "kind": "session", "task_id": task_id,
+            "project": project, "ts_end": _ts(day),
+            "bare": True, "session_id": session_id,
+            "resources_deployed": [], "resources_source": "session",
         })
 
     def _run_json(self, argv):
@@ -254,6 +270,237 @@ class TestHeuristicsEval(unittest.TestCase):
                           "--heuristics-file", str(SEED_HEUR),
                           "--scales-file", str(SEED_SCALES)])
         self.assertEqual(rc, 2)
+
+    # --- C1 coarse-evidence downgrade (H1) -----------------------------------
+
+    def test_h1_all_backfill_downgraded_to_theme_note(self):
+        # 5 tasks deploying demo-res at error 0.9 — ALL session-backfill. H1
+        # crosses the mean threshold, but session-backfill does NOT establish
+        # demo-res actually ran on these tasks, so the autonomous improve-now is
+        # downgraded to theme-note.
+        for i in range(1, 6):
+            self._task("agent-%d" % i, i, resources=["demo-res"],
+                       error_rate=0.9, source="session-backfill")
+        rc, payload, _ = self._run_json(["--task-id", "agent-1"])
+        self.assertEqual(rc, 0)
+        h1 = self._fired(payload)["H1"]
+        self.assertEqual(h1["action"], "improve-now")           # raw THEN kept
+        self.assertEqual(h1["effective_action"], "theme-note")  # downgraded
+        self.assertTrue(h1["downgrade_reason"])
+        self.assertIn("coarse-dominated", h1["downgrade_reason"])
+        # NOT recommended as an autonomous improve-now.
+        self.assertNotEqual(payload["firings"][0]["effective_action"],
+                            "improve-now")
+
+    def test_h1_precise_over_threshold_stays_improve_now(self):
+        # 5 precise (task-sourced) high-error tasks → improve-now survives.
+        for i in range(1, 6):
+            self._task("agent-%d" % i, i, resources=["demo-res"],
+                       error_rate=0.9, source="task")
+        rc, payload, _ = self._run_json(["--task-id", "agent-1"])
+        self.assertEqual(rc, 0)
+        h1 = self._fired(payload)["H1"]
+        self.assertEqual(h1["effective_action"], "improve-now")
+        self.assertIsNone(h1["downgrade_reason"])
+        self.assertEqual(h1["precise_samples"], 5)
+
+    def test_h1_coarse_just_under_line_stays_improve_now(self):
+        # 4 precise + 3 coarse (7 rows): coarse 3/7 ~= 0.43 <= 0.50, precise
+        # 4 >= 3 → improve-now survives.
+        for i in range(1, 5):
+            self._task("agent-%d" % i, i, resources=["demo-res"],
+                       error_rate=0.9, source="task")
+        for i in range(5, 8):
+            self._task("agent-%d" % i, i, resources=["demo-res"],
+                       error_rate=0.9, source="session-backfill")
+        rc, payload, _ = self._run_json(["--task-id", "agent-1"])
+        self.assertEqual(rc, 0)
+        h1 = self._fired(payload)["H1"]
+        self.assertEqual(h1["effective_action"], "improve-now")
+        self.assertIsNone(h1["downgrade_reason"])
+
+    def test_h1_coarse_just_over_line_downgraded(self):
+        # 3 precise + 4 coarse (7 rows): coarse 4/7 ~= 0.57 > 0.50 → downgrade
+        # even though precise (3) meets the floor.
+        for i in range(1, 4):
+            self._task("agent-%d" % i, i, resources=["demo-res"],
+                       error_rate=0.9, source="task")
+        for i in range(4, 8):
+            self._task("agent-%d" % i, i, resources=["demo-res"],
+                       error_rate=0.9, source="session-backfill")
+        rc, payload, _ = self._run_json(["--task-id", "agent-1"])
+        self.assertEqual(rc, 0)
+        h1 = self._fired(payload)["H1"]
+        self.assertEqual(h1["effective_action"], "theme-note")
+        self.assertIn("coarse-dominated", h1["downgrade_reason"])
+        self.assertEqual(h1["precise_samples"], 3)
+
+    # --- H2 interrupt-pressure boundary (I4) ---------------------------------
+
+    def test_h2_interrupt_ratio_fires_just_over_boundary(self):
+        # 10 tasks, 4 interrupted → ratio 0.40 > 0.30.
+        for i in range(1, 11):
+            self._task("agent-i%d" % i, i, interrupted=1 if i <= 4 else 0)
+        rc, payload, _ = self._run_json(["--window"])
+        self.assertEqual(rc, 0)
+        h2 = self._fired(payload)["H2"]
+        self.assertEqual(h2["action"], "theme-note")
+        self.assertAlmostEqual(h2["computed"], 0.4)
+
+    def test_h2_interrupt_ratio_does_not_fire_at_boundary(self):
+        # 10 tasks, 3 interrupted → ratio 0.30, NOT > 0.30.
+        for i in range(1, 11):
+            self._task("agent-i%d" % i, i, interrupted=1 if i <= 3 else 0)
+        rc, payload, _ = self._run_json(["--window"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("H2", self._fired(payload))
+
+    # --- H6 cache-efficiency floor (I4 + M1) ---------------------------------
+
+    def test_h6_fires_below_cache_floor(self):
+        for i in range(1, 11):
+            self._task("agent-c%d" % i, i, cache=0.4)
+        rc, payload, _ = self._run_json(["--window"])
+        self.assertEqual(rc, 0)
+        h6 = self._fired(payload)["H6"]
+        self.assertEqual(h6["action"], "theme-note")
+        self.assertAlmostEqual(h6["computed"], 0.4)
+
+    def test_h6_does_not_fire_above_cache_floor(self):
+        for i in range(1, 11):
+            self._task("agent-c%d" % i, i, cache=0.6)
+        rc, payload, _ = self._run_json(["--window"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("H6", self._fired(payload))
+
+    def test_h6_excludes_records_missing_cache_efficiency(self):
+        # 5 healthy readings (0.9) + 5 records with NO cache_efficiency field.
+        # Coercing absent->0 would drag the mean to 0.45 and spuriously fire;
+        # excluding them leaves a clean 0.9 mean over 5 samples.
+        for i in range(1, 6):
+            self._task("agent-c%d" % i, i, cache=0.9)
+        for i in range(6, 11):
+            self._task("agent-n%d" % i, i, cache=None)
+        rc, payload, _ = self._run_json(["--window"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("H6", self._fired(payload))
+
+    # --- H4 bare-match-streak: count, candidate-stub, session filter (I3/I4) --
+
+    def test_h4_session_filter_counts_only_current_session(self):
+        for i in range(1, 4):
+            self._bare("session-A%d" % i, i, "sessA")
+        for i in range(1, 3):
+            self._bare("session-B%d" % i, 10 + i, "sessB")
+        rc, payload, _ = self._run_json(["--window", "--session-id", "sessA"])
+        self.assertEqual(rc, 0)
+        h4 = self._fired(payload)["H4"]
+        self.assertEqual(h4["computed"], 3)
+        # H4 is a resource-GAP signal, owner-gated to a candidate stub — its
+        # improve-now is EXEMPT from the coarse downgrade.
+        self.assertEqual(h4["action"], "improve-now")
+        self.assertEqual(h4["effective_action"], "improve-now")
+
+    def test_h4_session_filter_excludes_other_session(self):
+        for i in range(1, 4):
+            self._bare("session-A%d" % i, i, "sessA")
+        for i in range(1, 3):
+            self._bare("session-B%d" % i, 10 + i, "sessB")
+        rc, payload, _ = self._run_json(["--window", "--session-id", "sessB"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("H4", self._fired(payload))
+
+    def test_h4_without_session_id_falls_back_to_project_recent(self):
+        for i in range(1, 4):
+            self._bare("session-A%d" % i, i, "sessA")
+        for i in range(1, 3):
+            self._bare("session-B%d" % i, 10 + i, "sessB")
+        rc, payload, _ = self._run_json(["--window"])
+        self.assertEqual(rc, 0)
+        h4 = self._fired(payload)["H4"]
+        self.assertEqual(h4["computed"], 5)   # both sessions, project-recent
+        self.assertIn("project-recent", h4.get("note", ""))
+
+    # --- H7 rework-signal: fires on 2, skips unscored, coarse downgrade (I4) --
+
+    def test_h7_fires_on_two_major(self):
+        for i in range(1, 3):
+            self._task("agent-m%d" % i, i, resources=["rw-res"])
+            self._score("agent-m%d" % i, i, rework="major")
+        for i in range(3, 5):
+            self._task("agent-m%d" % i, i, resources=["rw-res"])
+            self._score("agent-m%d" % i, i, rework="none")
+        rc, payload, _ = self._run_json(["--task-id", "agent-m1"])
+        self.assertEqual(rc, 0)
+        h7 = self._fired(payload)["H7"]
+        self.assertEqual(h7["action"], "improve-now")
+        self.assertEqual(h7["computed"], 2)
+
+    def test_h7_skips_unscored_tasks(self):
+        # 2 scored-major + 3 unscored tasks deploying rw-res. Only scored count.
+        for i in range(1, 3):
+            self._task("agent-m%d" % i, i, resources=["rw-res"])
+            self._score("agent-m%d" % i, i, rework="major")
+        for i in range(3, 6):
+            self._task("agent-u%d" % i, i, resources=["rw-res"])   # no score
+        rc, payload, _ = self._run_json(["--task-id", "agent-m1"])
+        self.assertEqual(rc, 0)
+        h7 = self._fired(payload)["H7"]
+        self.assertEqual(h7["samples"], 2)     # only the two scored tasks
+        self.assertEqual(h7["computed"], 2)
+
+    def test_h7_coarse_majors_downgraded_to_theme_note(self):
+        # 3 major-rework tasks deploying rw-res, ALL session-backfill: the
+        # attribution never established rw-res ran on them → downgrade.
+        for i in range(1, 4):
+            self._task("agent-b%d" % i, i, resources=["rw-res"],
+                       source="session-backfill")
+            self._score("agent-b%d" % i, i, rework="major")
+        rc, payload, _ = self._run_json(["--task-id", "agent-b1"])
+        self.assertEqual(rc, 0)
+        h7 = self._fired(payload)["H7"]
+        self.assertEqual(h7["action"], "improve-now")
+        self.assertEqual(h7["effective_action"], "theme-note")
+        self.assertIn("coarse-dominated", h7["downgrade_reason"])
+
+    def test_h7_precise_majors_stays_improve_now(self):
+        for i in range(1, 4):
+            self._task("agent-p%d" % i, i, resources=["rw-res"], source="task")
+            self._score("agent-p%d" % i, i, rework="major")
+        rc, payload, _ = self._run_json(["--task-id", "agent-p1"])
+        self.assertEqual(rc, 0)
+        h7 = self._fired(payload)["H7"]
+        self.assertEqual(h7["effective_action"], "improve-now")
+        self.assertIsNone(h7["downgrade_reason"])
+
+    # --- _priority_key ordering (I4) -----------------------------------------
+
+    def test_priority_key_orders_action_then_confidence_then_hid(self):
+        firings = [
+            {"rule": "H2", "action": "theme-note",
+             "effective_action": "theme-note", "confidence": "seed"},
+            {"rule": "H8", "action": "no-action",
+             "effective_action": "no-action", "confidence": "high"},
+            {"rule": "H7", "action": "improve-now",
+             "effective_action": "improve-now", "confidence": "seed"},
+            {"rule": "H1", "action": "improve-now",
+             "effective_action": "improve-now", "confidence": "high"},
+        ]
+        firings.sort(key=he._priority_key)
+        self.assertEqual([f["rule"] for f in firings], ["H1", "H7", "H2", "H8"])
+        self.assertEqual(firings[0]["rule"], "H1")   # the recommended pick
+
+    def test_priority_key_downgraded_improve_now_sorts_as_theme_note(self):
+        firings = [
+            {"rule": "H1", "action": "improve-now",
+             "effective_action": "theme-note", "confidence": "seed",
+             "downgrade_reason": "coarse-dominated: 5/5 backfill"},
+            {"rule": "H3", "action": "theme-note",
+             "effective_action": "theme-note", "confidence": "high"},
+        ]
+        firings.sort(key=he._priority_key)
+        # a genuine high-confidence theme-note outranks the downgraded H1.
+        self.assertEqual(firings[0]["rule"], "H3")
 
 
 if __name__ == "__main__":

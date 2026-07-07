@@ -49,11 +49,16 @@ class TestLintHeuristics(unittest.TestCase):
     def test_seed_file_passes(self):
         self.assertEqual(lh.lint(SEED), [])
 
-    def test_parse_seed_returns_eight_active_rules(self):
-        rules = [r for r in lh.parse_heuristics(SEED) if not r["retired"]]
-        self.assertEqual([r["id"] for r in rules],
-                         ["H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8"])
-        by_id = {r["id"]: r for r in rules}
+    def test_parse_seed_returns_seven_active_and_one_planned(self):
+        rules = lh.parse_heuristics(SEED)
+        active = [r for r in rules if not r["retired"] and not r["planned"]]
+        planned = [r for r in rules if r["planned"]]
+        # H5 (route-cost-outlier) is parked under ## Planned — its metric is not
+        # in the store yet — so it is parsed as PLANNED, not ACTIVE.
+        self.assertEqual([r["id"] for r in active],
+                         ["H1", "H2", "H3", "H4", "H6", "H7", "H8"])
+        self.assertEqual([r["id"] for r in planned], ["H5"])
+        by_id = {r["id"]: r for r in active}
         # THEN action parses to its first token even with a trailing parenthetical.
         self.assertEqual(by_id["H1"]["then"], "improve-now")
         self.assertEqual(by_id["H4"]["then"], "improve-now")   # "(files a ...)" stripped
@@ -129,6 +134,23 @@ class TestLintHeuristics(unittest.TestCase):
     def test_missing_file_flagged(self):
         errs = lh.lint(pathlib.Path("/nonexistent/HEURISTICS.md"))
         self.assertTrue(any("missing" in e for e in errs), errs)
+
+    # --- evaluator integrity (I2a) -------------------------------------------
+
+    def test_active_rule_without_evaluator_flagged(self):
+        # A self-added ACTIVE rule id with no registered engine evaluator must
+        # FAIL lint — the autocommit lint gate refuses it instead of committing
+        # a rule that the engine would silently skip at eval time.
+        errs = self._lint("# Title\n" + build_rule(hid="H9", slug="invented"))
+        self.assertTrue(
+            any("H9" in e and "evaluator" in e.lower() for e in errs), errs)
+
+    def test_planned_rule_without_evaluator_tolerated(self):
+        # A rule under ## Planned is exempt from the evaluator-integrity check.
+        text = (build_rule(hid="H1")
+                + "\n## Planned (not yet computable)\n"
+                + build_rule(hid="H9", slug="future-rule"))
+        self.assertEqual(self._lint(text), [])
 
 
 if __name__ == "__main__":
