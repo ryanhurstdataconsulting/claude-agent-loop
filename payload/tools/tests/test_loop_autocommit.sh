@@ -380,6 +380,49 @@ case "$files" in
   *) fail "am2: committed files '$files'" ;;
 esac
 
+# --- Case 16 (R1): body committed from the scanned snapshot, not a re-read -----
+# The message channel is scanned once, up front. If the bodyfile is mutated
+# AFTER that scan but BEFORE a commit, the committed message must still be the
+# CLEAN scanned snapshot — commit_lane commits from the snapshot, never a fresh
+# bodyfile re-read. Reproduced deterministically with a mixed commit: the
+# framework repo's pre-commit hook injects a marker into the bodyfile while the
+# framework lane is committing; the LOCAL lane (committed next) must NOT carry
+# the marker. A re-read would leak it into the local commit body.
+FW="$(new_fw_repo r1snap)"; H="$(new_home r1snap)"
+R1BODY="$SANDBOX/r1body.txt"
+cat > "$R1BODY" <<'EOF'
+(1) Task & Change
+A clean generic body for the R1 snapshot test. 12 rows checked.
+
+(2) Tests created / modified
+None — fixture.
+
+(3) Test results — evidence
+n/a
+EOF
+mkdir -p "$FW/.git/hooks"
+cat > "$FW/.git/hooks/pre-commit" <<EOF
+#!/bin/sh
+printf 'INJECTED_MARKER_R1 post-scan mutation of the body\n' >> "$R1BODY"
+exit 0
+EOF
+chmod +x "$FW/.git/hooks/pre-commit"
+printf 'framework generic r1 body\n' > "$FW/docs/fw.md"
+printf 'local generic r1 body\n' > "$H/.claude/notes/local.md"
+out="$(run_ac "$H" "$FW" -m "chore: r1 snapshot" -b "$R1BODY" \
+        "$FW/docs/fw.md" "$H/.claude/notes/local.md")"; rc=$?
+[ "$rc" -eq 0 ] && pass "r1: mixed commit exit 0" || fail "r1: exit $rc — $out"
+lbody="$(git -C "$H/.claude" log -1 --format=%B 2>/dev/null)"
+case "$lbody" in
+  *INJECTED_MARKER_R1*) fail "r1: local body carried the post-scan injection (re-read, not snapshot)" ;;
+  *) pass "r1: local commit body is the clean scanned snapshot" ;;
+esac
+fbody="$(git -C "$FW" log -1 --format=%B 2>/dev/null)"
+case "$fbody" in
+  *INJECTED_MARKER_R1*) fail "r1: framework body carried the injection" ;;
+  *) pass "r1: framework commit body clean" ;;
+esac
+
 echo "---"
 if [ "$fails" -eq 0 ]; then echo "loop_autocommit tests: OK"; else echo "loop_autocommit tests: FAIL ($fails)"; fi
 exit "$fails"

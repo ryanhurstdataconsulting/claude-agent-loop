@@ -60,21 +60,57 @@ is absent (hook failure, subagent context), read
    the registry rather than forcing a poor match:
    `score_task.py --new-scale <id> --levels "best>worst" --applies-to "…" --desc "…"`.
    Read `~/.claude/learning/SCALES.md` for the current scales.
-6. **LEARN** — until P6's heuristics engine lands, LEARN is two moves:
-   (a) **SCORE** (above) — already wired; and (b) **note a theme** when the task
-   exposed a recurring pain or a notable signal. Append exactly ONE row to
-   `~/.claude/learning/LOOP_THEMES.md`:
+6. **LEARN** — the loop's closing act. After SCORE, run the heuristics engine
+   over the recorded metrics and act on what fired:
    ```
-   | NEW | <date> | <project> | <theme-tag> | <one-line note> | <shard>#task_id=<id> |
+   python3 ~/.claude/tools/heuristics_eval.py --task-id <id>
    ```
-   following the `theme-assessment` skill's "Writing theme rows" section
-   (kebab-case `theme-tag`; `<shard>` is the metrics month, e.g. `2026-07`;
-   `<id>` is this task's `task_id`). One notable signal, one row — and no row
-   when nothing recurred. Reuse an existing tag when the signal is the same, so
-   clusters form. The heuristics engine that will automate the
-   improve-now / theme-note / no-action choice arrives in P6; until then the
-   judgment is yours. At 10 or more unprocessed `NEW` rows the SessionStart hook
-   nudges you to run `Skill(theme-assessment)`.
+   It reads the rulebook `~/.claude/learning/HEURISTICS.md` against the metrics
+   store and prints every FIRING rule with its computed value, threshold, and
+   evidence rows (each row tagged with its `resources_source`; a
+   `session-backfill` row is flagged coarse). Act on the **highest-priority**
+   firing rule. Priority is `improve-now` > `theme-note` > `no-action`, with ties
+   broken by CONFIDENCE (`high` > `medium` > `low` > `seed`) then H-id order; the
+   engine already sorts its output this way and labels the top one
+   `<- recommended`. The three actions:
+
+   - **improve-now** — create or patch the implicated resource, then commit it
+     through `loop_autocommit.sh` (the ONLY sanctioned write path). Use the
+     subject `loop: <type>(<scope>): <what> (H<id>)` and a three-section body
+     that **summarizes the metric evidence in GENERIC terms** — never paste raw
+     project slugs, branch names, or task ids. The commit message is scanned
+     exactly like the files, so a client-tinged body is blocked before anything
+     lands. Two cases file a `~/.claude/registry/candidates/` stub INSTEAD of
+     auto-creating: rule **H4** (bare-match-streak — the owner creates the
+     resource, never the loop), and any **gated-lane** target (a `settings*.json`,
+     a `hooks/` path, a `fragments/` source, or the `CLAUDE.md` sentinel block),
+     which `loop_autocommit.sh` refuses by design.
+   - **theme-note** — append exactly ONE `| NEW | … |` row to
+     `~/.claude/learning/LOOP_THEMES.md`, in the format the `theme-assessment`
+     skill's "Writing theme rows" section defines (kebab-case `theme-tag`;
+     `metrics-ref` is `<shard>#task_id=<id>`). Reuse an existing tag when the
+     signal is the same, so clusters form.
+   - **no-action** — the resource is healthy; change nothing, but still record
+     the decision (next step) so a clean run is stored as positive signal.
+
+   Whenever a rule fires and you act on it, **log the decision** so the loop can
+   see its own moves:
+   ```
+   python3 ~/.claude/tools/heuristics_eval.py --emit-learn <action> \
+       --rule H<id> --task-id <id>
+   ```
+   This appends a `kind:"learn"` record — even a `no-action` is stored. If
+   `heuristics_eval.py` prints `no rules fired`, LEARN is a no-op for this task
+   and there is nothing to log.
+
+   **Tuning the rulebook.** When the evidence warrants, the loop MAY edit its own
+   `HEURISTICS.md` — adjust a THRESHOLD, add a rule, or retire one to the
+   `## Retired` section, bumping the rule's `LAST-REVIEWED` date. Each such edit
+   is itself a `loop_autocommit.sh` commit whose body summarizes the metric
+   evidence generically; the autocommit gate runs
+   `python3 ~/.claude/tools/lint_heuristics.py` for you and blocks on a dirty
+   rulebook. At 10 or more unprocessed `NEW` theme rows the SessionStart hook
+   nudges you to run `Skill(theme-assessment)` to work the backlog.
 
 ## Gaps
 
@@ -91,6 +127,7 @@ directives in `~/.claude/CLAUDE.md` — to your machine, stack, and databases.
 ## Maintenance
 
 After ANY registry edit: `python3 ~/.claude/tools/lint_registry.py`. After ANY
-scales edit: `python3 ~/.claude/tools/lint_scales.py`. Registry drift checks are
+scales edit: `python3 ~/.claude/tools/lint_scales.py`. After ANY heuristics edit:
+`python3 ~/.claude/tools/lint_heuristics.py`. Registry drift checks are
 manual (there is no scheduled ritual): re-run the lints after edits, and
 `bash ~/.claude/tools/check_coverage.sh` when project wiring changes.

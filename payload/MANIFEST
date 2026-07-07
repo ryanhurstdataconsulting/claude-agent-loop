@@ -51,6 +51,8 @@ link-file tools/distill_transcripts.py
 link-file tools/env_tooling_preflight.py
 link-file tools/git_safety_preflight.py
 link-file tools/harvest_metrics.py
+link-file tools/heuristics_eval.py
+link-file tools/lint_heuristics.py
 link-file tools/lint_registry.py
 link-file tools/lint_scales.py
 link-file tools/loop_autocommit.sh

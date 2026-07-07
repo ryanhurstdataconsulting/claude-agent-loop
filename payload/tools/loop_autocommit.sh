@@ -138,6 +138,14 @@ fi
 [ -n "$(printf '%s' "$PATHS" | tr -d '[:space:]')" ] || {
   echo "loop_autocommit: at least one path is required" >&2; exit 2; }
 
+# R1: snapshot the body once, at scan time (below), and commit from THIS
+# snapshot — never a fresh $BODYFILE re-read. A bodyfile mutated between the
+# up-front message scan and the commit therefore cannot slip an UNSCANNED body
+# into the committed message. Cleaned up on every exit path.
+BODY_SNAPSHOT=""
+_cleanup_snapshot() { [ -n "$BODY_SNAPSHOT" ] && rm -f "$BODY_SNAPSHOT" 2>/dev/null || true; }
+trap _cleanup_snapshot EXIT INT TERM
+
 # Collapse newline / tab / pipe in the subject to spaces. A raw newline would
 # split the tab-delimited AUTO_COMMITS.log record (dropping the commit from the
 # digest review surface) and would spill past the git subject line. This one
@@ -325,10 +333,17 @@ EOF
 scan_message() {
   lane="$1"; repo_base="$2"
   mtdir="${TMPDIR:-/tmp}"
+  # R1: capture the exact body bytes ONCE. Both the scan (here) and the commit
+  # (commit_lane) read this snapshot, so what is scanned is byte-identical to
+  # what is committed even if $BODYFILE changes afterward.
+  if [ -z "$BODY_SNAPSHOT" ]; then
+    BODY_SNAPSHOT="$(mktemp "$mtdir/loopbodysnap.XXXXXX" 2>/dev/null || mktemp -t loopbodysnap)"
+    cat "$BODYFILE" > "$BODY_SNAPSHOT"
+  fi
   msgtmp="$(mktemp "$mtdir/loopmsg.XXXXXX" 2>/dev/null || mktemp -t loopmsg)"
   {
     printf '%s\n\n' "$SUBJECT"
-    cat "$BODYFILE"
+    cat "$BODY_SNAPSHOT"
   } > "$msgtmp"
   mbase="$(basename "$msgtmp")"; mdir="$(dirname "$msgtmp")"
   if [ "$lane" = "framework" ]; then
@@ -395,11 +410,15 @@ registry/guides/*|*/registry/guides/*) new_resource=1 ;;
 $added
 EOF
 
-  # Build the commit message: sanitized subject (+suffix), body, autonomy trailer.
+  # Build the commit message: sanitized subject (+suffix), body, autonomy
+  # trailer. R1: the body comes from the scanned snapshot (byte-identical to
+  # what the message channel gated), NOT a fresh $BODYFILE re-read. Fall back to
+  # $BODYFILE only in the theoretical case commit_lane runs before any scan.
+  body_src="$BODY_SNAPSHOT"; [ -n "$body_src" ] || body_src="$BODYFILE"
   msgfile="$(mktemp 2>/dev/null || mktemp -t loopmsg)"
   {
     printf 'loop: %s%s\n\n' "$SUBJECT_SANITIZED" "$suffix"
-    cat "$BODYFILE"
+    cat "$body_src"
     printf '\n\nCo-Authored-By: claude-agent-loop autonomy\n'
   } > "$msgfile"
   # Pathspec (--only) commit: commit EXACTLY these paths and leave any other
