@@ -22,7 +22,7 @@
 # install.sh v2 (P1) is the sole consumer of this file: it walks these lines
 # and builds/repairs the symlink + copy-if-absent state on every run.
 
-# --- skills/ (10 dirs) -------------------------------------------------------
+# --- skills/ (11 dirs) -------------------------------------------------------
 link-dir skills/aws-local-emulation
 link-dir skills/data-visualization
 link-dir skills/document-render
@@ -31,6 +31,7 @@ link-dir skills/excalidraw-diagram
 link-dir skills/explain-code
 link-dir skills/resource-loop
 link-dir skills/tauri-desktop-dev
+link-dir skills/theme-assessment
 link-dir skills/token-efficiency
 link-dir skills/visual-hierarchy-layered-charts
 
@@ -57,6 +58,7 @@ link-file tools/run_canaries.sh
 link-file tools/score_task.py
 link-file tools/secret_pii_scrub_gate.py
 link-file tools/ssh_tunnel_keepalive.sh
+link-file tools/themes_pending.py
 link-dir tools/templates
 link-dir tools/tests
 

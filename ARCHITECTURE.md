@@ -182,7 +182,7 @@ A `score` record carries `{task_id, scales, note, resources_deployed, ts_end}`,
 where `task_id` is `agent-<id>` for a subagent's own score or `session-<sid>`
 for main-thread work — a bare session id is normalized to the `session-` prefix
 before it joins, so it lands on the harvester's session rollup rather than
-orphaning — `scales` is the ordinal self-assessment map, `note` is a redacted
+being orphaned — `scales` is the ordinal self-assessment map, `note` is a redacted
 free-text remark, `resources_deployed` is copied from the joined `task` record
 (or, for a `session-*` id with no task record, the joined `session` record), and
 `ts_end` is the score's single timestamp.

@@ -60,8 +60,21 @@ is absent (hook failure, subagent context), read
    the registry rather than forcing a poor match:
    `score_task.py --new-scale <id> --levels "best>worst" --applies-to "…" --desc "…"`.
    Read `~/.claude/learning/SCALES.md` for the current scales.
-6. **LEARN** — *placeholder.* P6 wires the heuristics engine in here; until
-   then, SCORE is the whole closing step.
+6. **LEARN** — until P6's heuristics engine lands, LEARN is two moves:
+   (a) **SCORE** (above) — already wired; and (b) **note a theme** when the task
+   exposed a recurring pain or a notable signal. Append exactly ONE row to
+   `~/.claude/learning/LOOP_THEMES.md`:
+   ```
+   | NEW | <date> | <project> | <theme-tag> | <one-line note> | <shard>#task_id=<id> |
+   ```
+   following the `theme-assessment` skill's "Writing theme rows" section
+   (kebab-case `theme-tag`; `<shard>` is the metrics month, e.g. `2026-07`;
+   `<id>` is this task's `task_id`). One notable signal, one row — and no row
+   when nothing recurred. Reuse an existing tag when the signal is the same, so
+   clusters form. The heuristics engine that will automate the
+   improve-now / theme-note / no-action choice arrives in P6; until then the
+   judgment is yours. At 10 or more unprocessed `NEW` rows the SessionStart hook
+   nudges you to run `Skill(theme-assessment)`.
 
 ## Gaps
 
