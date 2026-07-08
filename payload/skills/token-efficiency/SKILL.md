@@ -46,6 +46,16 @@ wastes effort:
    on every later turn until compaction.
 5. **Return data as schema, not prose.** When a subagent hands back structured
    results, give it a `schema` so you skip re-parsing and retry loops.
+6. **Author large artifacts disk-first.** When a deliverable — a plan, a spec, a
+   report — needs many files read *verbatim* before you can write it, do that
+   reading inside throwaway subagent or `Workflow` contexts that write their
+   fragments straight to disk, then assemble the artifact from those files.
+   Front-loading the verbatim recon into your own window is the read→compact→reread
+   trap: the reads fill the context, compaction summarizes them away before any
+   output lands, and the next turn re-reads the same files — the deliverable stays
+   at zero bytes across every cycle. Durable progress lives on disk, not in the
+   conversation; a subagent's context is the second durability lever, because its
+   dumps die with it and never re-enter yours.
 
 ## Config levers — propose to the user, do not silently flip
 
