@@ -194,11 +194,13 @@ link-dir skills/write-unit-tests-with-coverage-target
 link-file skills/CATALOG.md
 # --- agents/ ------------------------------------------------------------------
 link-file agents/sql-safety-reviewer.md
+link-dir agents/roles
 
 # --- hooks/ ---------------------------------------------------------------
 link-file hooks/inject-resource-loop.sh
 link-file hooks/harvest-metrics.sh
 link-file hooks/precompact-event.sh
+link-file hooks/auto-update.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/build_watch.sh
@@ -211,11 +213,14 @@ link-file tools/harvest_metrics.py
 link-file tools/heuristics_eval.py
 link-file tools/lint_heuristics.py
 link-file tools/lint_registry.py
+link-file tools/lint_roles.py
 link-file tools/lint_scales.py
 link-file tools/loop_autocommit.sh
+link-file tools/loop_contribute.py
 link-file tools/loop_digest.py
 link-file tools/loop_promote.py
 link-file tools/loop_rollback.sh
+link-file tools/route_role.py
 link-file tools/prose_grammar.py
 link-file tools/prose_grammar_gate.py
 link-file tools/run_canaries.sh
@@ -226,7 +231,7 @@ link-file tools/themes_pending.py
 link-dir tools/templates
 link-dir tools/tests
 
-# --- registry/guides/ (26 guides + template) --------------------------------
+# --- registry/guides/ (30 guides + template) --------------------------------
 link-file registry/guides/_TEMPLATE.md
 link-file registry/guides/background-build-watch.md
 link-file registry/guides/check-coverage.md
@@ -242,10 +247,14 @@ link-file registry/guides/explain-code.md
 link-file registry/guides/git-safety-preflight.md
 link-file registry/guides/google_workspace.md
 link-file registry/guides/lint-registry.md
+link-file registry/guides/lint-roles.md
+link-file registry/guides/loop-contribute.md
 link-file registry/guides/machine-prose-grammar-gate.md
 link-file registry/guides/playwright.md
 link-file registry/guides/postgres-readonly.md
 link-file registry/guides/resource-loop.md
+link-file registry/guides/role-agents.md
+link-file registry/guides/route-role.md
 link-file registry/guides/run-canaries.md
 link-file registry/guides/secret-pii-scrub-gate.md
 link-file registry/guides/skill-library.md

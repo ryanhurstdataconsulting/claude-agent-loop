@@ -37,6 +37,17 @@ MANIFEST="$PAYLOAD/MANIFEST"
 VERSION_FILE="$SCRIPT_DIR/VERSION"
 INSTALLED_VERSION_FILE="$CLAUDE_DIR/learning/.installed-version"
 
+# --- optional flags ---------------------------------------------------------
+# --no-plugins: skip the `claude` CLI marketplace step and write marketplaces
+# into settings.json instead. Used by the auto-update hook so re-running the
+# installer from inside a live session never nests the CLI.
+NO_PLUGINS=""
+for _arg in "$@"; do
+  case "$_arg" in
+    --no-plugins) NO_PLUGINS=1 ;;
+  esac
+done
+
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 ok()   { printf '   [ok] %s\n' "$*"; }
@@ -240,7 +251,10 @@ fi
 step "Step 3 — register plugin marketplaces"
 
 EXTRA_MP=""
-if command -v claude >/dev/null 2>&1; then
+if [ -n "$NO_PLUGINS" ]; then
+  ok "plugin marketplaces via CLI skipped (--no-plugins) — writing into settings.json instead"
+  EXTRA_MP="claude-plugins-official=anthropics/claude-plugins-official,voltagent-subagents=VoltAgent/awesome-claude-code-subagents"
+elif command -v claude >/dev/null 2>&1; then
   ok "claude CLI found — adding marketplaces via the CLI"
   for repo in \
     anthropics/claude-plugins-official \

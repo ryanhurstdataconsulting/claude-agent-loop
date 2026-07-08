@@ -50,6 +50,59 @@ session start.
 
 ---
 
+## The role stack — HOOK → AGENT → SKILL → TOOL
+
+MATCH's first move is the **role hop**, the deterministic edge from the HOOK
+layer to the AGENT layer:
+
+```
+  HOOK   inject-resource-loop.sh directs: run the router on the task
+    │
+    ▼
+  AGENT  route_role.py scores the task against every agents/roles/<role>.md
+    │    (routes: phrases; multi-word hit = 2, word hit = 1; below the floor
+    │    → "generalist", stated). The winning role's frontmatter declares
+    │    skills: and mcps: — no model judgment anywhere on this edge.
+    ▼
+  SKILL  the role's declared skills become the MATCH shortlist
+    │    (each is a skill-library SKILL.md; all remain directly invocable —
+    │    the role layer organizes, it never gates)
+    ▼
+  TOOL   each skill's guide names the leaf executables it drives
+         (gates, linters, query packs, preflights, scorers)
+
+  MCP    cross-cut: the role's mcps: are preferred where configured;
+         unconfigured ones get an environment-bootstrap nudge, never
+         an invented registration.
+```
+
+Role files carry harness-compatible `name`/`description` keys too, so a role
+is also directly dispatchable as a subagent. `lint_roles.py` enforces the
+contract (name == role == filename; every declared skill exists; every
+declared MCP has a registry row) exactly the way `lint_registry.py` guards the
+index. Adding a role is one file plus a lint run.
+
+---
+
+## The contribution pipeline (fleet feedback)
+
+`loop_contribute.py` closes the loop across installs: local resources built by
+the loop (non-symlink entries under `~/.claude/{skills,tools,agents}`) are
+detected, gated, measured, summarized, and **auto-pushed to a
+`contrib/<date>-<slug>` branch** with the branch link printed. The gates are
+default-deny — `classify_visibility` must say GENERIC, the secret/PII scrub
+must pass, the grammar gate must pass on markdown — so CLIENT or UNSURE
+content never leaves the machine. Packaging happens in a temporary `git
+worktree` (the checkout is never disturbed), the MANIFEST line for each
+resource is added in the same commit, and `learning/contributed.json` dedups
+re-contribution. Pushes never target `main`; merging the pull request is a
+human decision; `AGENT_LOOP_CONTRIBUTE=0` disables the pipeline. SessionStart
+surfaces a one-line nudge when gate-cleared contributions are pending (the
+nudge itself never pushes), and the auto-update hook is the return path — the
+fleet pulls merged contributions on its next session.
+
+---
+
 ## The bootstrap skill — tailoring the generic bundle to you
 
 Everything above is generic on first install: the registry lists resources
