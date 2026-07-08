@@ -6,12 +6,15 @@
 
 ## Why this exists (evidence)
 The AGENT layer of the deterministic `HOOK → AGENT → SKILL → TOOL` stack. Each
-file in `agents/roles/<role>.md` is a company role — data-scientist,
-data-engineer, dba, cloud-architect, product-manager (more roles land over
-time) — declaring, in frontmatter, the `routes:` phrases the router scores, the
-`skills:` it operates from the skill library, and the `mcps:` best suited to its
-job. The frontmatter also carries harness-compatible `name`/`description` keys,
-so a role can be dispatched directly as a subagent.
+file in `agents/roles/<role>.md` is a company role — seventeen ship, covering
+every family in the skill library: data-scientist, data-engineer, dba,
+cloud-architect, product-manager, product-designer, frontend-engineer,
+backend-engineer, mobile-engineer, embedded-engineer, software-architect,
+devops-engineer, sre, security-engineer, qa-engineer, technical-writer, and
+engineering-manager — declaring, in frontmatter, the `routes:` phrases the
+router scores, the `skills:` it operates from the skill library, and the
+`mcps:` best suited to its job. The frontmatter also carries harness-compatible
+`name`/`description` keys, so a role can be dispatched directly as a subagent.
 
 ## When to deploy (triggers)
 - Automatically: the resource loop's MATCH step runs `route_role.py` over the

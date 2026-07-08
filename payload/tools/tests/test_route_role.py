@@ -115,6 +115,18 @@ class RepoRoles(unittest.TestCase):
             ("this slow query needs EXPLAIN ANALYZE", "dba"),
             ("run a Well-Architected review of our VPC design", "cloud-architect"),
             ("write a PRD and prioritize the backlog", "product-manager"),
+            ("run a heuristic evaluation and map the user journey", "product-designer"),
+            ("our Lighthouse score tanked — audit the Core Web Vitals", "frontend-engineer"),
+            ("scaffold a REST endpoint with request validation", "backend-engineer"),
+            ("set up a Fastlane release pipeline for the iOS app", "mobile-engineer"),
+            ("write an RTOS task and a peripheral driver for the sensor", "embedded-engineer"),
+            ("draft an ADR for the service boundary split", "software-architect"),
+            ("harden the Dockerfile and set up the GitOps deployment", "devops-engineer"),
+            ("define SLOs and an error budget for the API", "sre"),
+            ("threat-model this diff and wire SAST scanning into CI", "security-engineer"),
+            ("triage these flaky tests and author an E2E suite", "qa-engineer"),
+            ("write the release notes and update the Diátaxis docs", "technical-writer"),
+            ("draft the performance review from my 1:1 notes", "engineering-manager"),
         ]
         for task, want in cases:
             got = self.route(task)["role"]
