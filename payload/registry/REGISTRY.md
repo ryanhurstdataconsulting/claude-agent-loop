@@ -23,6 +23,7 @@
 ## Agents
 | sql-safety-reviewer | agent | Dispatch before every production-database query — SAFE / NOT SAFE verdict (read-only wrapper present, no DDL/DML) |
 | cloud-architect | agent | AWS/Terraform/IAM provisioning or cloud-architecture assessment (Well-Architected review) |
+| role-agents | agent | Serve as a company role — the router (route_role.py) picks the role agent (data-scientist, data-engineer, dba, cloud-architect, product-manager, …) whose skills/MCPs fit the task |
 
 ## MCPs
 | postgres-readonly | mcp | Live read-only SQL to a Postgres/MySQL database (localhost tunnel or direct) — fill in your host |
@@ -32,6 +33,9 @@
 ## Tools
 | distill-transcripts | tool | Extract redacted user/assistant text from session JSONLs (~/.claude/tools/) |
 | lint-registry | tool | Validate registry index ↔ guides after any registry edit |
+| lint-roles | tool | Validate role-agent files after any agents/roles edit — frontmatter shape, skill existence, MCP bijection |
+| route-role | tool | The deterministic task → role hop at MATCH — prints the Role — line with the role's skills and MCPs |
+| loop-contribute | tool | The feedback loop — gate-cleared (GENERIC-only) local resources auto-push to a contrib/* branch with an impact summary; --nudge at SessionStart |
 | run-canaries | tool | Full-coverage probe: does each project's session announce the loop? |
 | check-coverage | tool | Static check: CLAUDE.md stub + SUBAGENTS.md present across your projects |
 | git-safety-preflight | tool | Session start / before non-trivial git ops — detect file-sync `.git` eviction, clobbered venv symlink, missing remote, unpushed commits, not-a-repo |

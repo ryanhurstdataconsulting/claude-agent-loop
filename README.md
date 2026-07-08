@@ -1,15 +1,228 @@
 # claude-agent-loop
 
-A self-contained, portable Claude Code environment: a curated set of skills, an
-agent, tools, plugins, MCP specs, and a self-learning **Resource Loop**,
-packaged so any machine can be configured the same way in one command. The loop
-does not just deploy resources — it measures every task, scores the outcome, and
-acts on that history under a hard safety floor. See **`LEARNING.md`** for how
-that works.
+**A self-learning operating system for Claude Code** — a deterministic
+`HOOK → AGENT → SKILL → TOOL` stack that staffs your session like a tech
+company, measures every task it runs, learns from the history, keeps itself
+updated from git, and feeds gate-cleared improvements back upstream so every
+install benefits from every other install.
+
+One command installs it. Every session after that: hooks fire, a router picks
+the right **role** for your task (data scientist, DBA, cloud architect, product
+manager, …), that role's **skills** load, each skill drives its **tools** and
+preferred **MCP servers** — and when the work ends, the loop scores the result
+and learns.
+
+---
+
+## The whole system on one page
+
+```mermaid
+flowchart TD
+    subgraph L1["1 · HOOK — lifecycle (deterministic entry)"]
+        H1["SessionStart<br/>inject registry + nudges"]
+        H2["SessionStart / UserPromptSubmit<br/>auto-update: git pull the package"]
+        H3["PreCompact<br/>compaction counter + escalation"]
+        H4["SubagentStop / SessionEnd<br/>harvest metrics"]
+    end
+
+    subgraph L2["2 · AGENT — roles (who works the task)"]
+        R["route_role.py<br/>keyword arithmetic, same task = same role"]
+        RA["data-scientist · data-engineer · dba<br/>cloud-architect · product-manager · …"]
+    end
+
+    subgraph L3["3 · SKILL — capabilities (168-skill library)"]
+        S["the role's declared skills<br/>trigger-oriented SKILL.md guides"]
+    end
+
+    subgraph L4["4 · TOOL — leaf executables"]
+        T["linters · gates · query packs<br/>preflights · scorers"]
+    end
+
+    MCP[("MCP servers<br/>postgres · playwright · workspace")]
+    MET[("metrics store<br/>~/.claude/metrics/*.jsonl")]
+    LEARN["SCORE + LEARN<br/>heuristics over history"]
+    FLEET["contrib/* branch<br/>gate-cleared upstream push"]
+
+    H1 --> R
+    R --> RA
+    RA --> S
+    S --> T
+    RA -.->|"declared per role"| MCP
+    H4 --> MET
+    T --> MET
+    MET --> LEARN
+    LEARN -->|"improve a resource"| S
+    LEARN -->|"new local resource"| FLEET
+    FLEET -->|"PR merge"| H2
+```
+
+Every arrow is a **lookup, not a guess**: the hook injects the registry, the
+router scores the task against each role's declared `routes:`, the role's
+frontmatter names its `skills:` and `mcps:`, and each skill's guide names its
+tools. The same task routes the same way every time — and every hop is
+announced in the transcript.
+
+---
+
+## What happens when you start a session
+
+```mermaid
+sequenceDiagram
+    participant U as You
+    participant H as Hooks
+    participant C as Claude (session)
+    participant G as GitHub (package repo)
+
+    U->>C: open a session
+    C->>H: SessionStart fires
+    H->>G: auto-update: fetch + ff-only pull (12 h idle, dirty/diverged = skip + nudge)
+    G-->>H: new commits (symlinked content live instantly)
+    H->>C: inject registry index + role-hop directive + pending nudges
+    U->>C: "did the promo lift conversion? we can't randomize"
+    C->>C: route_role.py → Role — data-scientist
+    C->>C: loads causal-inference-analysis (skill) → read-only query pack (tool)
+    C-->>U: announced: Role + Resource Loop deployment lines
+    Note over C: work happens (subagents routed by model tier)
+    C->>H: PreCompact — counts compactions, offers TOKEN MINIMIZER EXTREME at 2
+    C->>H: SubagentStop / SessionEnd — harvest tokens, tests, errors per task
+    C->>C: SCORE (self-score) + LEARN (heuristics fire → improve / theme / none)
+```
+
+Leave the session open overnight and prompt it again? The
+**UserPromptSubmit** hook notices the idle gap and pulls the latest package
+before your prompt runs. Never blocking, never clobbering: the pull is
+fast-forward-only and skips (with a nudge) if your repo is dirty or has
+unpushed local commits.
+
+---
+
+## One task, top to bottom
+
+A real trace — what the stack actually prints:
+
+**You say:** *"did the promo lift conversion? we can't randomize"*
+
+**1 · HOOK** — SessionStart already injected the registry and this directive:
+*"role hop first: run route_role.py"*.
+
+**2 · AGENT** — the router scores the task deterministically:
+
+```
+$ python3 ~/.claude/tools/route_role.py "did the promo lift conversion? we can't randomize"
+Role — data-scientist (score 4: can't randomize, promo lift)
+  · skills: ab-test-design-and-power-analysis, causal-inference-analysis, …
+  · mcps: postgres-readonly
+```
+
+**3 · SKILL** — the role's shortlist points at `causal-inference-analysis`,
+whose guide carries the method decision tree (difference-in-differences vs.
+propensity matching vs. regression discontinuity) and its assumption checklist.
+
+**4 · TOOL / MCP** — the skill pulls cohort data through the read-only
+Postgres MCP, runs the diagnostic query pack, and the grammar gate proofreads
+the write-up before it ships.
+
+**Then the loop closes** — the metrics hooks recorded the task's tokens, tool
+errors, and tests; you (or the agent) score the outcome; the heuristics engine
+decides whether anything should improve. No confident role match? The router
+says `Role — generalist` and the loop falls back to plain semantic matching —
+the role layer organizes, it never gates.
+
+---
+
+## How the fleet learns (the feedback loop)
+
+Local installs collect experience; the package gets better for everyone.
+
+```mermaid
+flowchart LR
+    subgraph LOCAL["Your machine (local-only)"]
+        W["sessions build local<br/>skills · tools · agents"]
+        M[("metrics store<br/>tokens · errors · tests · scores")]
+    end
+
+    subgraph GATES["Publication gates (default-deny)"]
+        G1{"classify_visibility<br/>GENERIC?"}
+        G2{"secret / PII scrub<br/>clean?"}
+        G3{"grammar gate<br/>clean?"}
+    end
+
+    subgraph UPSTREAM["The shared package"]
+        B["contrib/date-slug branch<br/>+ impact summary (auto-pushed, link printed)"]
+        PR["pull request review"]
+        MAIN["main"]
+    end
+
+    W --> G1
+    M -->|"impact evidence"| B
+    G1 -->|yes| G2
+    G1 -->|"CLIENT / UNSURE"| X1["withheld — never leaves the machine"]
+    G2 -->|yes| G3
+    G2 -->|no| X1
+    G3 -->|yes| B
+    G3 -->|no| X1
+    B --> PR
+    PR --> MAIN
+    MAIN -->|"auto-update pulls on next session"| W
+```
+
+When the machine "plugs in" (SessionStart) — or at digest review — pending
+gate-cleared improvements are packaged and **auto-pushed to a `contrib/*`
+branch** (never `main`), and the branch link is printed. Each contribution
+carries a summary with exactly four sections: **what changed**, **how it
+improved the local environment**, the **agent-performance delta** (measured
+from the metrics store), and **how to implement it into the main project**.
+
+The safety contract, in one breath: *default-deny* — anything classified
+CLIENT or UNSURE, anything that trips the secret/PII scrub, never leaves the
+machine; pushes only ever target `contrib/*` branches; merge is a human PR
+decision; `AGENT_LOOP_CONTRIBUTE=0` turns the whole thing off.
+
+---
+
+## The layers, precisely
+
+### Hooks (the deterministic entries)
+
+| Hook file | Fires on | What it does |
+|---|---|---|
+| `inject-resource-loop.sh` | SessionStart | Injects the registry index, the six-step loop directive with the role hop, and up to three one-line nudges (themes, digest, contributions). |
+| `auto-update.sh` | SessionStart + UserPromptSubmit | Fast-forward-pulls the package from git on a new session or after a 12-hour idle gap; skips (and nudges) on a dirty or diverged repo; runs `install.sh --no-plugins` when the MANIFEST changed. |
+| `precompact-event.sh` | PreCompact | Records each compaction; on the second in one session, offers the opt-in TOKEN MINIMIZER EXTREME context-discipline rule set (never enables it without approval). |
+| `harvest-metrics.sh` | SubagentStop + SessionEnd | Harvests objective metrics per task — tokens by model, cache efficiency, tool errors, tests passed/failed, duration — into the local metrics store. |
+
+### Role agents (the AGENT layer)
+
+| Role | Owns | Preferred MCPs |
+|---|---|---|
+| `data-scientist` | experiments, causal inference, ML/GenAI features, eval harnesses | postgres-readonly |
+| `data-engineer` | pipelines, dbt, data quality, semantic layer, BI | postgres-readonly, google_workspace |
+| `dba` | query tuning, indexing, migration review, backup/DR, health diagnostics | postgres-readonly |
+| `cloud-architect` | Well-Architected reviews, VPC design, IAM, cost, DR, Terraform | — |
+| `product-manager` | PRDs, prioritization, roadmaps, RAID, sprint plans, status reports | google_workspace |
+
+More roles land over releases; each is one file in `payload/agents/roles/`
+declaring its `routes:`, `skills:`, and `mcps:` — add one and `lint_roles.py`
+holds the contract. Roles are also dispatchable directly as subagents.
+
+### Skills and tools
+
+The **168-skill library** (11 core framework skills + 157 role-based skills
+across 33 families) is the SKILL layer — browse it in the
+[Skill catalog](#skill-catalog) below or in
+[`payload/skills/CATALOG.md`](payload/skills/CATALOG.md). The TOOL layer is
+the 25 executables under `payload/tools/` — gates (grammar, secret/PII scrub,
+visibility), linters (registry, roles, scales, heuristics), the router, the
+metrics harvester and scorer, the heuristics engine, and the
+contribute/digest/rollback loop tooling.
+
+---
 
 ## Quickstart
 
 ```bash
+git clone https://github.com/ryanhurstdataconsulting/claude-agent-loop.git
+cd claude-agent-loop
 bash install.sh
 ```
 
@@ -21,13 +234,14 @@ Then, in Claude Code, run:
 
 That inspects your machine, asks a few questions, and tailors the registry,
 your `CLAUDE.md`, and the database/MCP templates to your stack. Restart Claude
-Code (or run `/hooks` to reload), give it a task, and you should see a line
-that begins with `Resource Loop —`. That is the environment working.
+Code (or run `/hooks` to reload), give it a task, and you should see two lines:
+`Role — …` and `Resource Loop — deploying: …`. That is the stack working.
 
 The installer is **idempotent** — safe to run twice — and it **merges** into
 your existing config rather than overwriting it. It backs up your
 `settings.json` and `CLAUDE.md` once, to `*.bak-agentloop`, before it changes
-anything.
+anything. After install you rarely touch git again: the auto-update hook keeps
+the package current on every new or long-idle session.
 
 ## What gets installed
 
@@ -36,16 +250,16 @@ Into `~/.claude/`:
 | Resource | Count | What it is |
 |---|---|---|
 | `skills/` | 168 | 11 core framework skills plus a 157-skill role-based library covering every tech-company role — product, design, engineering, infra, data, ML/AI, and leadership. Browse them in the Skill catalog below. |
-| `agents/` | 1 | `sql-safety-reviewer` — a read-only SQL safety gate. |
-| `tools/` | 22 | Python and shell helpers: the learning tools (metrics harvester, task scorer, `SCALES.md`/`HEURISTICS.md` linters, the heuristics engine, the pending-themes check, the visibility classifier, and the autocommit/rollback/digest/promote scripts), plus the carried set (registry linter, grammar gate, secret/PII scrub gate, git and environment preflights, an SSH-tunnel keepalive, background build-watch, a transcript distiller, and coverage/canary checkers), plus `templates/` and `tests/`. |
-| `registry/` | index + 26 guides | The resource registry the Resource Loop reads: `REGISTRY.md`, `TRIGGERS.md`, `guides/`, and `candidates/`. |
-| `hooks/` | 4 | `inject-resource-loop.sh` (SessionStart), `harvest-metrics.sh` (SubagentStop + SessionEnd), `precompact-event.sh` (PreCompact), and `auto-update.sh` (SessionStart + UserPromptSubmit — fast-forward-pulls the package from git on a new or stale-resumed session; a pre-flight skips a dirty or diverged repo so local work is never clobbered). |
+| `agents/` | 1 + 5 roles | `sql-safety-reviewer` (a read-only SQL safety gate) plus the role agents under `agents/roles/` — the AGENT layer the router selects from. |
+| `tools/` | 25 | Python and shell helpers: the learning tools (metrics harvester, task scorer, linters for the registry/roles/scales/heuristics, the heuristics engine, the pending-themes check, the visibility classifier, and the autocommit/rollback/digest/promote/contribute scripts), the role router, plus the carried set (grammar gate, secret/PII scrub gate, git and environment preflights, an SSH-tunnel keepalive, background build-watch, a transcript distiller, and coverage/canary checkers), plus `templates/` and `tests/`. |
+| `registry/` | index + 30 guides | The resource registry the Resource Loop reads: `REGISTRY.md`, `TRIGGERS.md`, `guides/`, and `candidates/`. |
+| `hooks/` | 4 | The four lifecycle hooks in the table above, wired to five events. |
 | `learning/` | 4 seeds | The self-learning state: `SCALES.md`, `HEURISTICS.md`, `LOOP_THEMES.md`, and `CLIENT_MARKERS.txt`, copied once from the shipped seeds and then kept local-only (never published). |
 | plugins | 11 | `superpowers` plus the ten VoltAgent subagent-catalog categories, from two marketplaces (`claude-plugins-official`, `voltagent-subagents`). |
 
-Into `~/.claude/settings.json` (merged, never clobbered): the four hook groups
-(SessionStart, SubagentStop, SessionEnd, PreCompact), the 11-plugin
-`enabledPlugins` map, and the two marketplace registrations.
+Into `~/.claude/settings.json` (merged, never clobbered): the five hook-event
+groups, the 11-plugin `enabledPlugins` map, and the two marketplace
+registrations.
 
 Into `~/.claude/CLAUDE.md` (appended between `<!-- BEGIN AGENT-LOOP -->`
 sentinels): the operating directives — the Resource Loop protocol, the
@@ -56,6 +270,55 @@ directive, and a pointer to subagent routing.
 registration. Those ship as *specs* under `payload/mcp-specs/`, which you wire
 up yourself with your own credentials — the `environment-bootstrap` skill
 walks you through it. See `payload/mcp-specs/postgres-readonly.md`.
+
+## The Resource Loop in 60 seconds
+
+The Resource Loop is the closed, self-learning loop that runs for every task:
+before Claude starts, it checks who should work the task and what already
+exists — and after the work is done, it measures the result and acts on what
+it learns.
+
+A SessionStart hook injects a compact **registry index** into the session. The
+`resource-loop` skill then runs six steps:
+
+1. **MATCH** — role hop first: the router picks the role agent whose declared
+   routes fit the task (deterministic keyword arithmetic), and that role's
+   skills become the shortlist; then the semantic match against the registry
+   confirms or extends it.
+2. **ANNOUNCE** — state, in one line each, the role and the resources being
+   deployed, or that there was no match and it is proceeding bare. (When a
+   recurring need has no resource, it files a candidate stub for review.)
+3. **ROUTE** — dispatch subagents at the right model tier: planning at the
+   session model, creation-heavy work to Opus, and mechanical work to Sonnet
+   (or Haiku for trivial probes).
+4. **EXECUTE** — do the work while the hooks passively harvest objective
+   metrics (tokens, cache efficiency, tool errors, tests, duration).
+5. **SCORE** — record a short subjective self-score of the outcome.
+6. **LEARN** — evaluate a rulebook of heuristics over the metric history and act
+   on what fired: improve a resource now, note a cross-task theme, or do nothing
+   — logging the decision either way.
+
+Underneath those steps sit the learning layers: a local-only **metrics** store,
+ordinal **scoring** scales, a cross-task **theme** log, a **heuristics** rulebook,
+a gated **autonomy** path that commits the loop's own improvements under a hard
+safety floor, and the **contribution** pipeline that pushes gate-cleared
+improvements upstream. All of it is explained in **`LEARNING.md`**; the full
+mechanics are in `ARCHITECTURE.md`.
+
+## Making it yours
+
+This bundle ships generic. The `environment-bootstrap` skill is what turns it
+into *your* setup: it inspects your OS, editor, languages, cloud CLIs, and
+database clients; interviews you about what you build and which databases you
+touch; then tailors the registry (pruning what you don't need, enabling what
+you do), appends a personalized block to your `CLAUDE.md`, and fills in the
+database/MCP templates with your own connection details. Run it once after
+install, and again any time your setup changes.
+
+The bundle is DBA-friendly out of the box — a read-only SQL safety reviewer, a
+read-only Postgres/MySQL MCP template, and an SSH-tunnel keepalive are
+included — but none of it is required if that is not your work; the
+interview simply skips or prunes what does not apply.
 
 <!-- BEGIN SKILL CATALOG -->
 ## Skill catalog
@@ -474,66 +737,16 @@ walks you through it. See `payload/mcp-specs/postgres-readonly.md`.
 
 <!-- END SKILL CATALOG -->
 
-## The Resource Loop in 60 seconds
+## Documentation map
 
-The Resource Loop is a closed, self-learning loop that runs for every task:
-before Claude starts, it checks what resources already exist so it reaches for
-them instead of rebuilding them — and after the work is done, it measures the
-result and acts on what it learns.
-
-A SessionStart hook injects a compact **registry index** into the session. The
-`resource-loop` skill then runs six steps:
-
-1. **MATCH** — compare your task against the registry (by task shape, not just
-   keywords).
-2. **ANNOUNCE** — state, in one line, which resource it is deploying, or that
-   there was no match and it is proceeding bare. (When a recurring need has no
-   resource, it files a candidate stub for review — it never auto-creates one.)
-3. **ROUTE** — dispatch subagents at the right model tier: planning at the
-   session model, creation-heavy work to Opus, and mechanical work to Sonnet
-   (or Haiku for trivial probes).
-4. **EXECUTE** — do the work while three hooks passively harvest objective
-   metrics (tokens, cache efficiency, tool errors, tests, duration).
-5. **SCORE** — record a short subjective self-score of the outcome.
-6. **LEARN** — evaluate a rulebook of heuristics over the metric history and act
-   on what fired: improve a resource now, note a cross-task theme, or do nothing
-   — logging the decision either way.
-
-Underneath those steps sit the learning layers: a local-only **metrics** store,
-ordinal **scoring** scales, a cross-task **theme** log, a **heuristics** rulebook,
-and a gated **autonomy** path that commits the loop's own improvements under a
-hard safety floor. All of it is explained in **`LEARNING.md`**; the full
-mechanics are in `ARCHITECTURE.md`.
-
-The payoff: less duplicated work, a visible announcement of what is in play, a
-growing catalog of reusable resources, and a system that measures whether its
-own choices worked.
-
-## Making it yours
-
-This bundle ships generic. The `environment-bootstrap` skill is what turns it
-into *your* setup: it inspects your OS, editor, languages, cloud CLIs, and
-database clients; interviews you about what you build and which databases you
-touch; then tailors the registry (pruning what you don't need, enabling what
-you do), appends a personalized block to your `CLAUDE.md`, and fills in the
-database/MCP templates with your own connection details. Run it once after
-install, and again any time your setup changes.
-
-The bundle is DBA-friendly out of the box — a read-only SQL safety reviewer, a
-read-only Postgres/MySQL MCP template, and an SSH-tunnel keepalive are
-included — but none of it is required if that is not your work; the
-interview simply skips or prunes what does not apply.
-
-## Documentation in this folder
-
-- **`README.md`** (this file) — what it is and how to start.
+- **`README.md`** (this file) — the architecture, high to low, and how to start.
 - **`INSTALL.md`** — the manual, step-by-step fallback, plus exactly what the
   installer changes and how to undo it.
-- **`ARCHITECTURE.md`** — the component diagram, the three layers, the resource
+- **`ARCHITECTURE.md`** — the component diagram, the four layers, the resource
   categories, the metrics store contract, the autonomy mechanics, and the
   model-routing table.
-- **`LEARNING.md`** — the self-learning layer: what "learning" means here,
-  objective metrics, subjective scores, themes, heuristics, and the gated
-  autonomy path.
+- **`LEARNING.md`** — the self-learning layer: objective metrics, subjective
+  scores, themes, heuristics, the gated autonomy path, and the contribution
+  pipeline.
 - **`SECURITY.md`** — what the installer will and will not touch, the secrets/PII
-  posture, and the autonomy residual risks.
+  posture, and the autonomy and contribution residual risks.

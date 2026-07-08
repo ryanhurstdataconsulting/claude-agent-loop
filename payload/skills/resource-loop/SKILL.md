@@ -18,6 +18,22 @@ is absent (hook failure, subagent context), read
    keyword and file-glob shortcut alongside the semantic match — it is an
    accelerator, not a replacement for reading the task. Read the full guide
    (`~/.claude/registry/guides/<name>.md`) for anything you will deploy.
+
+   **Role hop (the deterministic HOOK → AGENT edge).** Before the semantic
+   match, run the role router:
+   ```
+   python3 ~/.claude/tools/route_role.py "<the task text>"
+   ```
+   It scores the task against every role agent in `~/.claude/agents/roles/`
+   (data-scientist, data-engineer, dba, cloud-architect, product-manager, …) by
+   plain keyword arithmetic — the same task always routes the same way. On a
+   confident match it prints a `Role — <role> (…) · skills: … · mcps: …` line:
+   include that line with your ANNOUNCE, treat the role's declared skills as
+   your MATCH shortlist (AGENT → SKILL), and prefer its declared MCPs where they
+   are configured (connect nothing new — nudge `environment-bootstrap` for
+   unconfigured ones). `Role — generalist` means no confident role: skip the
+   hop and match normally. The role layer organizes; it never gates — any
+   library skill remains directly invocable.
 2. **ANNOUNCE** — before work starts, output exactly one line:
    `Resource Loop — deploying: <name> (<category>) — <reason>[; …]`
    or, when nothing matches:

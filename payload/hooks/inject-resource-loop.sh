@@ -5,15 +5,18 @@ REGISTRY="$HOME/.claude/registry/REGISTRY.md"
 cat <<'EOF'
 <resource-loop>
 Run the Resource Loop before your first task (skill: resource-loop):
-MATCH the task against the index below; ANNOUNCE one line starting
-"Resource Loop — deploying:" (or "Resource Loop — no registry match;
-proceeding bare."); ROUTE subagents (planning = session model, creation =
-opus, mechanical = sonnet/haiku); EXECUTE; SCORE the result; LEARN (evaluate
-heuristics → improve-now / theme-note / no-action). File GAPs (recurring
-unmet needs) as candidate stubs in ~/.claude/registry/candidates/. Keyword
-shortcuts for MATCH are in ~/.claude/registry/TRIGGERS.md. Carry this
-directive into every subagent brief. First run on this machine? Run the
-environment-bootstrap skill to tailor this config to your stack.
+MATCH the task against the index below — role hop first: run
+python3 ~/.claude/tools/route_role.py "<task>" and, on a confident match,
+print its "Role —" line and use that role's skills as your shortlist;
+ANNOUNCE one line starting "Resource Loop — deploying:" (or "Resource Loop —
+no registry match; proceeding bare."); ROUTE subagents (planning = session
+model, creation = opus, mechanical = sonnet/haiku); EXECUTE; SCORE the
+result; LEARN (evaluate heuristics → improve-now / theme-note / no-action).
+File GAPs (recurring unmet needs) as candidate stubs in
+~/.claude/registry/candidates/. Keyword shortcuts for MATCH are in
+~/.claude/registry/TRIGGERS.md. Carry this directive into every subagent
+brief. First run on this machine? Run the environment-bootstrap skill to
+tailor this config to your stack.
 EOF
 if [ -r "$REGISTRY" ]; then
   echo "--- REGISTRY INDEX ($(grep -c '^|' "$REGISTRY") rows) ---"
@@ -22,12 +25,14 @@ else
   echo "--- REGISTRY INDEX unavailable; read ~/.claude/registry/guides/ on demand ---"
 fi
 
-# --- Nudge budget: at most 2 injected lines inside these tags (2 of 2 used). --
-# Line 1 of 2: the loop-themes nudge (P4). When 10 or more theme rows are still
+# --- Nudge budget: at most 3 injected lines inside these tags (3 of 3 used). --
+# Line 1 of 3: the loop-themes nudge (P4). When 10 or more theme rows are still
 # unprocessed, point the session at the theme-assessment skill. Additive-only:
 # if python3 or the counter tool is missing, or the count is not a plain
 # integer, we inject nothing and never fail the session start.
-# Line 2 of 2: the digest nudge (P5), added below after the themes block.
+# Line 2 of 3: the digest nudge (P5), added below after the themes block.
+# Line 3 of 3: the contribute nudge (feedback loop) — gate-cleared local
+# resources ready to auto-push upstream. Same degrade discipline as the others.
 THEME_NUDGE_AT=10
 THEMES_TOOL="$HOME/.claude/tools/themes_pending.py"
 THEMES_FILE="$HOME/.claude/learning/LOOP_THEMES.md"
@@ -53,6 +58,18 @@ if command -v python3 >/dev/null 2>&1 && [ -r "$DIGEST_TOOL" ]; then
   case "$digest_line" in
     '') : ;;                                # nothing due — no nudge
     *) printf '%s\n' "$digest_line" ;;
+  esac
+fi
+
+# Line 3 of 3: the contribute nudge (feedback loop). loop_contribute.py --nudge
+# prints one line when gate-cleared local resources are ready to auto-push to a
+# contrib/* branch, and nothing otherwise. It NEVER pushes from this hook.
+CONTRIB_TOOL="$HOME/.claude/tools/loop_contribute.py"
+if command -v python3 >/dev/null 2>&1 && [ -r "$CONTRIB_TOOL" ]; then
+  contrib_line="$(python3 "$CONTRIB_TOOL" --nudge 2>/dev/null)"
+  case "$contrib_line" in
+    '') : ;;                                # nothing pending — no nudge
+    *) printf '%s\n' "$contrib_line" ;;
   esac
 fi
 
