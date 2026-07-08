@@ -8,6 +8,14 @@
             "command": "$HOME/.claude/hooks/inject-resource-loop.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/auto-update.sh"
+          }
+        ]
       }
     ],
     "SubagentStop": [
@@ -36,6 +44,16 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/precompact-event.sh"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/auto-update.sh"
           }
         ]
       }

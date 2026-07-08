@@ -39,7 +39,7 @@ Into `~/.claude/`:
 | `agents/` | 1 | `sql-safety-reviewer` — a read-only SQL safety gate. |
 | `tools/` | 22 | Python and shell helpers: the learning tools (metrics harvester, task scorer, `SCALES.md`/`HEURISTICS.md` linters, the heuristics engine, the pending-themes check, the visibility classifier, and the autocommit/rollback/digest/promote scripts), plus the carried set (registry linter, grammar gate, secret/PII scrub gate, git and environment preflights, an SSH-tunnel keepalive, background build-watch, a transcript distiller, and coverage/canary checkers), plus `templates/` and `tests/`. |
 | `registry/` | index + 26 guides | The resource registry the Resource Loop reads: `REGISTRY.md`, `TRIGGERS.md`, `guides/`, and `candidates/`. |
-| `hooks/` | 3 | `inject-resource-loop.sh` (SessionStart), `harvest-metrics.sh` (SubagentStop + SessionEnd), and `precompact-event.sh` (PreCompact). |
+| `hooks/` | 4 | `inject-resource-loop.sh` (SessionStart), `harvest-metrics.sh` (SubagentStop + SessionEnd), `precompact-event.sh` (PreCompact), and `auto-update.sh` (SessionStart + UserPromptSubmit — fast-forward-pulls the package from git on a new or stale-resumed session; a pre-flight skips a dirty or diverged repo so local work is never clobbered). |
 | `learning/` | 4 seeds | The self-learning state: `SCALES.md`, `HEURISTICS.md`, `LOOP_THEMES.md`, and `CLIENT_MARKERS.txt`, copied once from the shipped seeds and then kept local-only (never published). |
 | plugins | 11 | `superpowers` plus the ten VoltAgent subagent-catalog categories, from two marketplaces (`claude-plugins-official`, `voltagent-subagents`). |
 

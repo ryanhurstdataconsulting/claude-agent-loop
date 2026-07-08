@@ -199,6 +199,7 @@ link-file agents/sql-safety-reviewer.md
 link-file hooks/inject-resource-loop.sh
 link-file hooks/harvest-metrics.sh
 link-file hooks/precompact-event.sh
+link-file hooks/auto-update.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/build_watch.sh
