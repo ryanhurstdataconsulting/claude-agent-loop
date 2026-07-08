@@ -31,6 +31,12 @@ from lint_roles import parse_frontmatter  # noqa: E402  (same-dir tool import)
 MIN_SCORE = 2
 
 
+def normalize(text):
+    """Lowercase and treat hyphen/underscore/slash as spaces, so "threat-model",
+    "threat model", and "threat_model" all match the same route phrase."""
+    return re.sub(r"\s+", " ", re.sub(r"[-_/]", " ", (text or "").lower())).strip()
+
+
 def load_roles(roles_dir):
     roles = []
     for f in sorted(pathlib.Path(roles_dir).glob("*.md")):
@@ -46,16 +52,17 @@ def load_roles(roles_dir):
 
 def phrase_hits(task_lc, phrase):
     """Return the score contribution of one route phrase against the task."""
-    p = phrase.strip().lower()
+    p = normalize(phrase)
     if not p:
         return 0
-    if re.search(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(p), task_lc):
+    # Optional trailing "s" tolerates simple plurals ("flaky test" ~ "flaky tests").
+    if re.search(r"(?<![a-z0-9])%ss?(?![a-z0-9])" % re.escape(p), task_lc):
         return 2 if " " in p else 1
     return 0
 
 
 def route(task, roles):
-    task_lc = re.sub(r"\s+", " ", (task or "").lower())
+    task_lc = normalize(task)
     best = {"role": "generalist", "score": 0, "matched": [], "skills": [],
             "mcps": [], "reason": "no route phrase reached the confidence floor"}
     if not task_lc.strip():

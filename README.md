@@ -27,7 +27,7 @@ flowchart TD
 
     subgraph L2["2 · AGENT — roles (who works the task)"]
         R["route_role.py<br/>keyword arithmetic, same task = same role"]
-        RA["data-scientist · data-engineer · dba<br/>cloud-architect · product-manager · …"]
+        RA["17 roles — data-scientist · dba · sre · devops<br/>security · qa · architect · designer · …"]
     end
 
     subgraph L3["3 · SKILL — capabilities (168-skill library)"]
@@ -200,10 +200,23 @@ decision; `AGENT_LOOP_CONTRIBUTE=0` turns the whole thing off.
 | `dba` | query tuning, indexing, migration review, backup/DR, health diagnostics | postgres-readonly |
 | `cloud-architect` | Well-Architected reviews, VPC design, IAM, cost, DR, Terraform | — |
 | `product-manager` | PRDs, prioritization, roadmaps, RAID, sprint plans, status reports | google_workspace |
+| `product-designer` | UX research, design sprints, heuristic evaluations, journey maps, accessibility, design systems | playwright |
+| `frontend-engineer` | UI components with tests, Core Web Vitals, a11y fixes, TypeScript migration, API clients | playwright |
+| `backend-engineer` | REST endpoints, migrations, caching, authn/authz, webhooks, OpenAPI contracts, integrations | postgres-readonly |
+| `mobile-engineer` | screens/ViewModels, Fastlane releases, crash reporting, offline sync, store compliance | — |
+| `embedded-engineer` | peripheral drivers, RTOS tasks, MISRA triage, OTA bootloaders, HIL CI | — |
+| `software-architect` | ADRs, service boundaries, zero-downtime migrations, architecture reviews, build-vs-buy, tech radar | — |
+| `devops-engineer` | CI pipelines, Terraform, Dockerfiles, GitOps, releases, golden paths, k8s hardening, DORA | — |
+| `sre` | SLOs/error budgets, postmortems, runbooks, chaos experiments, observability, capacity | — |
+| `security-engineer` | threat models, SAST/DAST/SCA, secrets remediation, supply-chain signing, CVE triage | — |
+| `qa-engineer` | E2E suites, contract tests, flaky-test triage, load tests, test strategy, a11y testing | playwright |
+| `technical-writer` | Diátaxis docs, API references, release notes, tutorials, KB articles, RFPs, support content | google_workspace |
+| `engineering-manager` | performance reviews, 1:1 synthesis, sprint plans, status reports, delivery metrics | google_workspace |
 
-More roles land over releases; each is one file in `payload/agents/roles/`
-declaring its `routes:`, `skills:`, and `mcps:` — add one and `lint_roles.py`
-holds the contract. Roles are also dispatchable directly as subagents.
+Seventeen roles cover every family in the skill library. Each is one file in
+`payload/agents/roles/` declaring its `routes:`, `skills:`, and `mcps:` — add
+one and `lint_roles.py` holds the contract. Roles are also dispatchable
+directly as subagents.
 
 ### Skills and tools
 
@@ -250,7 +263,7 @@ Into `~/.claude/`:
 | Resource | Count | What it is |
 |---|---|---|
 | `skills/` | 168 | 11 core framework skills plus a 157-skill role-based library covering every tech-company role — product, design, engineering, infra, data, ML/AI, and leadership. Browse them in the Skill catalog below. |
-| `agents/` | 1 + 5 roles | `sql-safety-reviewer` (a read-only SQL safety gate) plus the role agents under `agents/roles/` — the AGENT layer the router selects from. |
+| `agents/` | 1 + 17 roles | `sql-safety-reviewer` (a read-only SQL safety gate) plus the 17 role agents under `agents/roles/` — the AGENT layer the router selects from, covering every family in the skill library. |
 | `tools/` | 25 | Python and shell helpers: the learning tools (metrics harvester, task scorer, linters for the registry/roles/scales/heuristics, the heuristics engine, the pending-themes check, the visibility classifier, and the autocommit/rollback/digest/promote/contribute scripts), the role router, plus the carried set (grammar gate, secret/PII scrub gate, git and environment preflights, an SSH-tunnel keepalive, background build-watch, a transcript distiller, and coverage/canary checkers), plus `templates/` and `tests/`. |
 | `registry/` | index + 30 guides | The resource registry the Resource Loop reads: `REGISTRY.md`, `TRIGGERS.md`, `guides/`, and `candidates/`. |
 | `hooks/` | 4 | The four lifecycle hooks in the table above, wired to five events. |
