@@ -31,6 +31,18 @@ Feeds every other registry row — it is the dispatcher, not a peer. Pairs
 with `lint-registry` (keeps the index it reads valid) and
 `check-coverage` / `run-canaries` (verify the loop actually fires).
 
+## Subagent brief footer (H4 fix, 2026-07-10)
+Metrics show subagents overwhelmingly "proceeding bare" because dispatch
+briefs omit the loop contract. Append this footer verbatim to every subagent
+and workflow-agent brief (it costs three lines and makes the task visible to
+the loop):
+
+> Resource Loop: before starting, print one line — either
+> `Resource Loop — deploying: <registry id> (<category>) — <reason>` or
+> `Resource Loop — no registry match; proceeding bare.` At task close, score
+> yourself: `python3 ~/.claude/tools/score_task.py --task-id agent-<your id>
+> --scale outcome=<great|good|bad|horrible> --scale evidence=<proven|partial|asserted>`.
+
 ## Build & maintenance notes
 Skill lives at `~/.claude/skills/resource-loop/SKILL.md`; the injection hook
 lives at `~/.claude/hooks/inject-resource-loop.sh`.
