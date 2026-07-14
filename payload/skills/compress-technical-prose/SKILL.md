@@ -31,10 +31,11 @@ CATALOG.md bullets over budget before applying this technique by hand.
 
 ## Technique B — on-request file compression
 
-An explicit, user-invoked pass over one long technical file (a verbose
-README, a design doc) that condenses it: preserve every fact and every full
-sentence, cut only redundancy and restatement. Always invoked on request for
-a named file — never applied automatically to conversational output.
+This technique is an explicit, user-invoked pass over one long technical
+file (a verbose README, a design doc) that condenses it: preserve every
+fact and every full sentence, cut only redundancy and restatement. It is
+always invoked on request for a named file — never applied automatically to
+conversational output.
 
 ## Hard boundary
 
