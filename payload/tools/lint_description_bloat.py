@@ -36,7 +36,7 @@ def lint(root):
         if n > MAX_DESCRIPTION_WORDS:
             errs.append(
                 f"{name}: description is {n} words (budget {MAX_DESCRIPTION_WORDS}) "
-                f"— consider compress-technical-prose"
+                f"— consider running the compress-technical-prose skill"
             )
     catalog = root / "CATALOG.md"
     if catalog.is_file():
@@ -49,7 +49,7 @@ def lint(root):
             if n > MAX_CATALOG_BULLET_WORDS:
                 errs.append(
                     f"{name}: CATALOG.md bullet is {n} words "
-                    f"(budget {MAX_CATALOG_BULLET_WORDS}) — consider compress-technical-prose"
+                    f"(budget {MAX_CATALOG_BULLET_WORDS}) — consider running the compress-technical-prose skill"
                 )
     return errs
 
