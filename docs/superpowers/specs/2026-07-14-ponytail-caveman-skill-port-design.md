@@ -109,7 +109,7 @@ it cannot be missed.
 
 **Relationship to existing guidance:** this skill gives the "Don't add
 features, refactor, or introduce abstractions beyond what the task requires"
-line already in the machine-global CLAUDE.md a concrete, checkable procedure
+line already in the base agent instructions a concrete, checkable procedure
 instead of a general exhortation. It does not replace that line; it operationalizes it.
 
 **Trigger phrases (frontmatter `description:`):** "do we need this," "is

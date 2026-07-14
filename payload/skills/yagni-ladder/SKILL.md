@@ -1,6 +1,6 @@
 ---
 name: yagni-ladder
-description: Use before writing new code — a function, a dependency, a config knob, a new file, an abstraction — or when reviewing a diff/PR for unnecessary complexity. Climb a seven-rung ladder from the top and stop at the first rung that resolves the need. Triggers - "do we need this," "is there a simpler way," "yagni," adding a dependency, scaffolding a new file or module, a design proposing a new abstraction.
+description: Use before writing new code — a function, a dependency, a config knob, a new file, an abstraction — or when reviewing a diff/PR for unnecessary complexity. Climb a seven-rung ladder from the top and stop at the first rung that resolves the need. Triggers: "do we need this," "is there a simpler way," "yagni," adding a dependency, scaffolding a new file or module, a design proposing a new abstraction.
 ---
 
 # YAGNI Ladder

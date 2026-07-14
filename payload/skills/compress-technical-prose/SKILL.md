@@ -1,6 +1,6 @@
 ---
 name: compress-technical-prose
-description: Use when a SKILL.md frontmatter description, a CATALOG.md bullet, or a tool docstring is too long, or when asked to trim, condense, or reduce the token cost of a specific technical document. Two techniques - compress tool/skill descriptions without losing meaning, and condense one named long file on request. It never compresses conversational replies or other human-facing prose into fragments. Triggers - "this tool description is too long," "trim this doc," "condense this file," reviewing CATALOG.md or SKILL.md descriptions for bloat.
+description: Use when a SKILL.md frontmatter description, a CATALOG.md bullet, or a tool docstring is too long, or when asked to trim, condense, or reduce the token cost of a specific technical document. Two techniques: compress tool/skill descriptions without losing meaning, and condense one named long file on request. It never compresses conversational replies or other human-facing prose into fragments. Triggers: "this tool description is too long," "trim this doc," "condense this file," reviewing CATALOG.md or SKILL.md descriptions for bloat.
 ---
 
 # Compress Technical Prose
