@@ -22,7 +22,7 @@
 # install.sh v2 (P1) is the sole consumer of this file: it walks these lines
 # and builds/repairs the symlink + copy-if-absent state on every run.
 
-# --- skills/ (168 dirs) + catalog --------------------------------------
+# --- skills/ (170 dirs) + catalog --------------------------------------
 link-dir skills/ab-test-design-and-power-analysis
 link-dir skills/accessibility-audit
 link-dir skills/accessibility-test-audit
@@ -58,6 +58,7 @@ link-dir skills/ci-pipeline-authoring
 link-dir skills/ci-runner-capacity-and-queue-tuning
 link-dir skills/cloud-cost-optimization-audit
 link-dir skills/community-feedback-digest
+link-dir skills/compress-technical-prose
 link-dir skills/connection-pool-and-vacuum-tuning
 link-dir skills/containerize-service-for-deployment
 link-dir skills/content-staleness-audit
@@ -191,6 +192,7 @@ link-dir skills/write-jtbd-statements
 link-dir skills/write-openapi-spec-and-contract-tests
 link-dir skills/write-peripheral-driver-with-hil-test
 link-dir skills/write-unit-tests-with-coverage-target
+link-dir skills/yagni-ladder
 link-file skills/CATALOG.md
 # --- agents/ ------------------------------------------------------------------
 link-file agents/sql-safety-reviewer.md
@@ -211,6 +213,7 @@ link-file tools/env_tooling_preflight.py
 link-file tools/git_safety_preflight.py
 link-file tools/harvest_metrics.py
 link-file tools/heuristics_eval.py
+link-file tools/lint_description_bloat.py
 link-file tools/lint_heuristics.py
 link-file tools/lint_registry.py
 link-file tools/lint_roles.py
