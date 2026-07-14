@@ -13,7 +13,13 @@ test output to an exit code, refusing to read files). This resource captures the
 first-party Claude Platform features, with the correctness floor made explicit so
 efficiency never overrides the commit protocol's evidence requirement. It also
 codifies what was already implicit and being re-derived per session (targeted
-reads, subagent file-handoff, model/effort routing).
+reads, subagent file-handoff, model/effort routing). Extended 2026-07-08 after a
+plan-authoring session thrashed through five compactions: the verbatim recon for a
+large implementation plan was front-loaded into the main window, so each compaction
+summarized the reads away before any plan bytes reached disk. Lever 6 ("author
+large artifacts disk-first") captures the fix — delegate the verbatim reads into
+throwaway subagent/Workflow contexts that write fragments to disk, then assemble
+from those files.
 
 ## When to deploy (triggers)
 Starting a long-horizon, high-volume, or multi-file task; before dispatching a

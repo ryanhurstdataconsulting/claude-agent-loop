@@ -1,6 +1,6 @@
 # Skill catalog
 
-**168 skills across 34 categories.** Each is a full, generic, publication-safe `SKILL.md` an agent loads when a task matches its trigger. This file is the browsable index; the skills themselves live in `payload/skills/<name>/`.
+**170 skills across 34 categories.** Each is a full, generic, publication-safe `SKILL.md` an agent loads when a task matches its trigger. This file is the browsable index; the skills themselves live in `payload/skills/<name>/`.
 
 `★` marks a **cross-cutting** skill — one that recurs across several roles, so it is built once and consumed by many. Skills install via the MANIFEST and are invocable with the `Skill` tool once installed.
 
@@ -19,6 +19,8 @@
 - **`document-render`** — Rendering a markdown deliverable to PDF (reports, leadership briefs, legal contracts) or converting a generated .pptx / .docx deck to PDF or per-slide images for QA.
 - **`tauri-desktop-dev`** — Building or debugging a Tauri 2 desktop app, or packaging a Python / FastAPI backend as a Tauri sidecar.
 - **`aws-local-emulation`** — A dev or test task will create, mutate, or "verify" AWS resources (create-table, put-item, s3 mb, create-queue, create-function, deploy a CDK/Terraform stack) or asks to "get it working" or "test the pipeline…
+- **`yagni-ladder`** — Use before writing new code — a function, dependency, config knob, file, or abstraction — or when reviewing a diff for unnecessary complexity. Climb the seven-rung ladder and stop at the first rung that resolves the need.
+- **`compress-technical-prose`** — Use when a SKILL.md description, a CATALOG.md bullet, or a tool docstring is too long, or when asked to trim, condense, or reduce the token cost of a specific technical document.
 
 ## Product Management
 
