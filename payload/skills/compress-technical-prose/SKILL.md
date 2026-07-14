@@ -1,6 +1,6 @@
 ---
 name: compress-technical-prose
-description: Use when a SKILL.md frontmatter description, a CATALOG.md bullet, or a tool docstring is too long, or when asked to trim, condense, or reduce the token cost of a specific technical document. Two techniques - compress tool/skill descriptions without losing meaning, and condense one named long file on request. Never compresses conversational replies or human-facing prose into fragments. Triggers - "this tool description is too long," "trim this doc," "condense this file," reviewing CATALOG.md or SKILL.md descriptions for bloat.
+description: Use when a SKILL.md frontmatter description, a CATALOG.md bullet, or a tool docstring is too long, or when asked to trim, condense, or reduce the token cost of a specific technical document. Two techniques - compress tool/skill descriptions without losing meaning, and condense one named long file on request. It never compresses conversational replies or other human-facing prose into fragments. Triggers - "this tool description is too long," "trim this doc," "condense this file," reviewing CATALOG.md or SKILL.md descriptions for bloat.
 ---
 
 # Compress Technical Prose
@@ -40,9 +40,8 @@ a named file — never applied automatically to conversational output.
 
 This skill never compresses conversational replies, commit messages, PR
 bodies, or any prose generated for a human reader into fragments or
-shorthand. That behavior is excluded because it conflicts with the
-machine-global grammar mandate: every reply, commit message, and PR body
-stays in complete, grammatically correct sentences.
+shorthand. That behavior is caveman's core mode and is deliberately
+excluded because it conflicts with the machine-global grammar mandate.
 
 ## When to use this
 
