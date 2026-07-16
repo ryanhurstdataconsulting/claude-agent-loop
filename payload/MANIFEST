@@ -203,6 +203,7 @@ link-file hooks/inject-resource-loop.sh
 link-file hooks/harvest-metrics.sh
 link-file hooks/precompact-event.sh
 link-file hooks/auto-update.sh
+link-file hooks/context-budget.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/build_watch.sh

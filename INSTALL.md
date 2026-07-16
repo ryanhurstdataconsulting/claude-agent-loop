@@ -99,16 +99,18 @@ Add these keys to `~/.claude/settings.json`, keeping everything you already
 have. Use a JSON-aware edit (the installer uses `python3`); do not use `sed` on
 JSON.
 
-- **`hooks`** — add these four event groups (each only if a group with the same
+- **`hooks`** — add these five event groups (each only if a group with the same
   command is not already present), with `$HOME` replaced by your real home. The
-  SessionStart hook injects the registry index; the other three passively
-  harvest the metrics the loop learns from:
+  SessionStart hook injects the registry index; the PostToolUse hook watches the
+  session's context budget; the other three passively harvest the metrics the
+  loop learns from:
 
   ```json
   "SessionStart": [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/inject-resource-loop.sh" } ] } ],
   "SubagentStop": [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/harvest-metrics.sh" } ] } ],
   "SessionEnd":   [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/harvest-metrics.sh" } ] } ],
-  "PreCompact":   [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/precompact-event.sh" } ] } ]
+  "PreCompact":   [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/precompact-event.sh" } ] } ],
+  "PostToolUse":  [ { "hooks": [ { "type": "command", "command": "$HOME/.claude/hooks/context-budget.sh" } ] } ]
   ```
 
 - **`enabledPlugins`** — set each of these to `true`:
