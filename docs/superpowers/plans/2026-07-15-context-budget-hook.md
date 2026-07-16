@@ -515,7 +515,7 @@ PASS - grammar regression: exact strings
 
 Run: `cd ~/dev/claude-agent-loop/payload/tools/tests && bash run_all.sh > /tmp/run_all_task1.log 2>&1; tail -3 /tmp/run_all_task1.log`
 
-Expected final line: `run_all: 30 suites, 0 failed` (29 existing suites + this one; exit 0).
+Expected final line: `run_all: 29 suites, 0 failed` (28 existing suites + this one; exit 0).
 
 - [ ] **Step 6: Commit**
 
@@ -548,7 +548,7 @@ kill switch CONTEXT_BUDGET_DISABLE=1.
 $ bash payload/tools/tests/test_context_budget.sh
 [paste the 18 PASS lines and the final "test_context_budget: OK" from the real run]
 $ bash run_all.sh   # from payload/tools/tests/
-run_all: 30 suites, 0 failed
+run_all: 29 suites, 0 failed
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 MSG
@@ -729,7 +729,7 @@ Expected: `OK (0 issues)` for each file. If the gate flags a pre-existing issue 
 
 Run: `cd ~/dev/claude-agent-loop/payload/tools/tests && bash run_all.sh > /tmp/run_all_task2.log 2>&1; tail -3 /tmp/run_all_task2.log`
 
-Expected final line: `run_all: 30 suites, 0 failed` — the regression net for the MANIFEST and fragment edits (the suite includes `test_install_symlinks.sh`).
+Expected final line: `run_all: 29 suites, 0 failed` — the regression net for the MANIFEST and fragment edits (the suite includes `test_install_symlinks.sh`).
 
 - [ ] **Step 10: Commit**
 
@@ -760,7 +760,7 @@ FRAGMENT_OK
 $ for f in README.md ARCHITECTURE.md INSTALL.md CHANGELOG.md; do python3 ~/.claude/tools/prose_grammar_gate.py "$f"; done
 [paste the four gate result lines from the real run]
 $ bash run_all.sh   # from payload/tools/tests/
-run_all: 30 suites, 0 failed
+run_all: 29 suites, 0 failed
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 MSG
