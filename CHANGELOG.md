@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   steers the agent to a durable pause point before auto-compaction can destroy
   working state: a single warning at 70% of the 150k-token budget, then a
   checkpoint directive from 85% that repeats on every tool call until a resume
-  brief exists at `metrics/state/budget/checkpoints/<session>.md`. Fail-open,
+  brief exists at `~/.claude/metrics/state/budget/checkpoints/<session>.md`. Fail-open,
   always exits 0; kill switch `CONTEXT_BUDGET_DISABLE=1`. Covered by the
   13-case `payload/tools/tests/test_context_budget.sh`, including a
   fixed-string grammar regression on the emitted directive prose.
