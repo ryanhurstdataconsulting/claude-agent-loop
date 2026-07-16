@@ -195,9 +195,9 @@ c_expected = (
     "Context-budget CRITICAL: this session's context window is at 86% of its "
     "150000-token budget (130000 tokens). Reach a safe pause point now: "
     "(1) commit and push all work in progress; (2) update your progress ledger "
-    "and todos; (3) write a resume brief to %s covering task state, branch "
-    "names, next steps, and key file paths. This reminder repeats on every "
-    "tool call until that file exists." % ckpt
+    "and todos; (3) write a resume brief to " + ckpt + " covering task state, "
+    "branch names, next steps, and key file paths. This reminder repeats on "
+    "every tool call until that file exists."
 )
 assert warn["hookSpecificOutput"]["additionalContext"] == w_expected, "warn text drifted"
 assert crit["hookSpecificOutput"]["additionalContext"] == c_expected, "critical text drifted"
