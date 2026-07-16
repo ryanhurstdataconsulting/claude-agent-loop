@@ -57,6 +57,17 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/read-guard.sh"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {
