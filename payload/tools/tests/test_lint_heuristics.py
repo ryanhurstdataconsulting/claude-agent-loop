@@ -145,6 +145,13 @@ class TestLintHeuristics(unittest.TestCase):
         self.assertTrue(
             any("H9" in e and "evaluator" in e.lower() for e in errs), errs)
 
+    def test_active_h5_lints_clean_now_that_evaluator_exists(self):
+        # Pins the live-rulebook fix: an ACTIVE H5 block must lint clean
+        # because "H5" is now in heuristics_eval.EVALUABLE_RULES.
+        errs = self._lint("# Title\n" + build_rule(hid="H5",
+                                                   slug="route-cost-outlier"))
+        self.assertEqual(errs, [])
+
     def test_planned_rule_without_evaluator_tolerated(self):
         # A rule under ## Planned is exempt from the evaluator-integrity check.
         text = (build_rule(hid="H1")

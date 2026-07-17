@@ -503,5 +503,116 @@ class TestHeuristicsEval(unittest.TestCase):
         self.assertEqual(firings[0]["rule"], "H3")
 
 
+class TestRouteCost(unittest.TestCase):
+    """Direct unit tests for the H5 helpers and evaluator (no store needed)."""
+
+    @staticmethod
+    def _rule():
+        # Shape mirrors lint_heuristics.parse_heuristics output for the seed H5.
+        return {"id": "H5", "slug": "route-cost-outlier", "then": "theme-note",
+                "retired": False, "planned": False,
+                "fields": {"WINDOW": "last 10 tasks",
+                           "THRESHOLD": "2 or more mechanical tasks routed to Opus",
+                           "THEN": "theme-note", "CONFIDENCE": "seed"}}
+
+    @staticmethod
+    def _trec(task_id, models):
+        return {"schema": 1, "kind": "task", "task_id": task_id,
+                "ts_end": _ts(1), "resources_source": "task", "models": models}
+
+    # --- _route_tier / _dominant_model ---------------------------------------
+
+    def test_dominant_model_picks_largest_out(self):
+        rec = self._trec("t1", {"claude-opus-4-8": {"out": 100},
+                                "claude-sonnet-5": {"out": 5000}})
+        self.assertEqual(he._dominant_model(rec), "claude-sonnet-5")
+        self.assertEqual(he._route_tier(rec), "sonnet")
+
+    def test_dominant_model_tie_breaks_lexicographically(self):
+        rec = self._trec("t1", {"claude-sonnet-5": {"out": 100},
+                                "claude-haiku-4-5": {"out": 100}})
+        self.assertEqual(he._dominant_model(rec), "claude-haiku-4-5")
+        self.assertEqual(he._route_tier(rec), "haiku")
+
+    def test_route_tier_substring_map(self):
+        cases = [("claude-opus-4-8", "opus"), ("claude-sonnet-5", "sonnet"),
+                 ("claude-haiku-4-5-20251001", "haiku"),
+                 ("claude-fable-5", "session"), ("claude-mythos-5", "session"),
+                 ("gpt-x", "unknown")]
+        for mid, tier in cases:
+            rec = self._trec("t1", {mid: {"out": 10}})
+            self.assertEqual(he._route_tier(rec), tier, mid)
+
+    def test_route_tier_missing_or_malformed_models(self):
+        self.assertEqual(he._route_tier({"task_id": "t1"}), "unknown")
+        self.assertEqual(he._route_tier(self._trec("t1", {})), "unknown")
+        # A non-numeric "out" counts as 0; the numeric sibling dominates.
+        rec = self._trec("t1", {"claude-opus-4-8": {"out": "many"},
+                                "claude-sonnet-5": {"out": 1}})
+        self.assertEqual(he._route_tier(rec), "sonnet")
+
+    # --- _eval_route_cost ------------------------------------------------------
+
+    def _population(self, shapes_and_models):
+        """shapes_and_models: list of (task_shape or None, models dict)."""
+        tasks, scores = [], {}
+        for i, (shape, models) in enumerate(shapes_and_models, 1):
+            tid = "t%d" % i
+            tasks.append(self._trec(tid, models))
+            score = {"kind": "score", "task_id": tid}
+            if shape is not None:
+                score["task_shape"] = shape
+            scores[tid] = score
+        return tasks, scores
+
+    OPUS = {"claude-opus-4-8": {"out": 900}}
+    SONNET = {"claude-sonnet-5": {"out": 900}}
+    FABLE = {"claude-fable-5": {"out": 900}}
+
+    def test_eval_route_cost_fires_at_two_hits(self):
+        rows = [("creation", self.SONNET)] * 8
+        rows += [("mechanical", self.OPUS), ("mechanical", self.OPUS)]
+        tasks, scores = self._population(rows)
+        f = he._eval_route_cost(self._rule(), tasks, scores)
+        self.assertIsNotNone(f)
+        self.assertEqual(f["rule"], "H5")
+        self.assertEqual(f["action"], "theme-note")
+        self.assertEqual(f["scope"], "global")
+        self.assertEqual(f["metric"], "mechanical_tasks_routed_to_opus")
+        self.assertEqual(f["computed"], 2)
+        self.assertEqual(f["comparator"], ">=")
+        self.assertEqual(f["threshold"], 2)
+        self.assertEqual(f["samples"], 10)
+        self.assertEqual(f["window"], 10)
+        self.assertEqual(f["min_samples"], 2)
+        self.assertEqual([e["task_id"] for e in f["evidence"]], ["t9", "t10"])
+        self.assertEqual(f["evidence"][0]["value"],
+                         "mechanical -> claude-opus-4-8")
+
+    def test_eval_route_cost_one_hit_no_firing(self):
+        rows = [("creation", self.SONNET)] * 9 + [("mechanical", self.OPUS)]
+        tasks, scores = self._population(rows)
+        self.assertIsNone(he._eval_route_cost(self._rule(), tasks, scores))
+
+    def test_eval_route_cost_session_model_not_a_hit(self):
+        rows = [("creation", self.SONNET)] * 8
+        rows += [("mechanical", self.FABLE), ("mechanical", self.FABLE)]
+        tasks, scores = self._population(rows)
+        self.assertIsNone(he._eval_route_cost(self._rule(), tasks, scores))
+
+    def test_eval_route_cost_unlabeled_tasks_never_enter_window(self):
+        # One labeled task (mechanical + opus): below the 2-sample floor even
+        # though it is a hit; the eleven unlabeled/unscored rows do not count.
+        rows = [(None, self.OPUS)] * 11 + [("mechanical", self.OPUS)]
+        tasks, scores = self._population(rows)
+        del scores["t3"]  # an unscored task, not merely an unlabeled one
+        self.assertIsNone(he._eval_route_cost(self._rule(), tasks, scores))
+
+    def test_h5_in_evaluable_and_global_sets(self):
+        self.assertIn("H5", he.EVALUABLE_RULES)
+        self.assertIn("H5", he.GLOBAL_TASK)
+        self.assertNotIn("H5", he.DOWNGRADE_RULES)
+
+
 if __name__ == "__main__":
     unittest.main()
