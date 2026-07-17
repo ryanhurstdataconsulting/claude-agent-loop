@@ -376,8 +376,10 @@ def main(argv=None):
     print(str(out_path))
     print("loop_digest: %d auto-change(s) since last digest, %d blocked, "
           "%d task(s) this month." % (len(rows), blocked, m["tasks"]))
-    print("loop_digest: framework commits are unpushed — publish at review "
-          "with: %s" % _publish_command(PUBLISH_REPO_DISPLAY))
+    fw_unpushed = _unpushed(args.framework_repo)
+    if fw_unpushed is not None and fw_unpushed != "0":
+        print("loop_digest: framework commits are unpushed — publish at review "
+              "with: %s" % _publish_command(PUBLISH_REPO_DISPLAY))
     return 0
 
 
