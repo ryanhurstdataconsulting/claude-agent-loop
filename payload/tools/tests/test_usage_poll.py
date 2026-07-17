@@ -218,6 +218,34 @@ class TestPollOrchestration(unittest.TestCase):
             self.assertFalse(cache_path.exists())
             self.assertIn("browser/fetch error", log_path.read_text())
 
+    def test_cache_write_error_leaves_existing_cache_untouched_and_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache_path, log_path = self._paths(d)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            sentinel = '{"stale": true}'
+            cache_path.write_text(sentinel)
+
+            real_rename = os.rename
+
+            def boom_rename(src, dst):
+                raise OSError("simulated disk-full error during cache rename")
+
+            os.rename = boom_rename
+            try:
+                up.poll(cache_path, log_path, storage_state_path="/unused",
+                        fetch=lambda ssp: ("https://claude.ai/settings/usage",
+                                           SAMPLE_USAGE_HTML))
+            finally:
+                os.rename = real_rename
+
+            # crux of the test: the pre-existing cache file is byte-for-byte
+            # untouched, since atomic_write_json's rename never succeeded.
+            self.assertEqual(cache_path.read_text(), sentinel)
+
+            log_lines = log_path.read_text().strip("\n").splitlines()
+            self.assertEqual(len(log_lines), 1)
+            self.assertIn("poll aborted: could not write cache", log_lines[0])
+
 
 if __name__ == "__main__":
     unittest.main()
