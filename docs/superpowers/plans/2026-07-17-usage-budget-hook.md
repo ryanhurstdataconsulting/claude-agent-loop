@@ -41,14 +41,14 @@
 - Create: `payload/tools/usage_poll.py` — standalone Playwright poller; `--login` bootstrap mode and default `--poll` mode; writes the atomic `status.json` cache.
 - Create: `payload/launchd/com.hdc.claude-agent-loop.usage-poll.plist` — launchd user-agent job running the poller every ~10 minutes.
 - Create: `payload/tools/tests/test_usage_poll.py` — poller test suite (schema-lock, hygiene, launchd/manifest checks).
-- Modify: `payload/MANIFEST` — link-file lines for the poller module, plist, and test file.
+- Modify: `payload/MANIFEST` — link-file lines for the poller module and the plist (`payload/tools/tests` is already `link-dir`'d, so `test_usage_poll.py` installs automatically and needs no MANIFEST line of its own).
 - Modify: `CHANGELOG.md` — "Added" bullet for the poller.
 - Modify: `INSTALL.md` — new "Usage-budget poller (one-time)" section documenting the two Ryan-gated manual steps.
 
 **Hook group:**
 - Create: `payload/hooks/usage-budget.sh` — PostToolUse hook (bash wrapper + Python heredoc), cache-read-only, fail-open.
-- Create: `payload/tools/tests/test_usage_budget.sh` — 17-case hook test suite.
-- Modify: `payload/MANIFEST` — link-file line for the hook and its test.
+- Create: `payload/tools/tests/test_usage_budget.sh` — 17-case hook test suite (21 total `PASS` lines — several cases assert more than one outcome).
+- Modify: `payload/MANIFEST` — link-file line for the hook (`payload/tools/tests` is already `link-dir`'d; the test file needs no MANIFEST line of its own).
 - Modify: `payload/fragments/settings.fragment.json` — PostToolUse hook registration.
 - Modify: `README.md` — hooks table entry.
 - Modify: `ARCHITECTURE.md` — one-paragraph description of the poller/hook split.
@@ -2036,7 +2036,8 @@ expected values):
   ```bash
   bash payload/tools/tests/test_usage_budget.sh; echo "rc=$?"
   ```
-  Expected: 17 `PASS - …` lines, then:
+  Expected: 21 `PASS - …` lines (17 cases, several asserting more than one
+  outcome), then:
   ```
   test_usage_budget: OK
   rc=0
@@ -2068,7 +2069,7 @@ expected values):
 
   (3) Test results — evidence
   bash payload/tools/tests/test_usage_budget.sh
-  -> 17x 'PASS - …'; 'test_usage_budget: OK'; rc=0.
+  -> 21x 'PASS - …' (17 cases); 'test_usage_budget: OK'; rc=0.
   prose_grammar_gate.py on the WARN+CRIT strings: clean pass (rc=0).
 
   Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
