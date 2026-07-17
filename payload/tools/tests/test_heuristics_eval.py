@@ -536,6 +536,18 @@ class TestHeuristicsEval(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertNotIn("H5", self._fired(payload))
 
+    def test_h5_planning_and_creation_on_opus_are_not_hits(self):
+        # Pins the task_shape == "mechanical" conjunct against regression: a
+        # full, valid window where planning/creation tasks (not mechanical)
+        # are routed to Opus must never count as an H5 hit, no matter how
+        # many of them there are.
+        rows = [("creation", self._SONNET)] * 8
+        rows += [("planning", self._OPUS), ("creation", self._OPUS)]
+        self._plant_labeled(rows)
+        rc, payload, err = self._run_json(["--window"])
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("H5", self._fired(payload))
+
     # --- _priority_key ordering (I4) -----------------------------------------
 
     def test_priority_key_orders_action_then_confidence_then_hid(self):

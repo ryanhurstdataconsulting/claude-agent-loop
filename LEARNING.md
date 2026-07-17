@@ -194,6 +194,7 @@ The active seed rules, by name and intent:
 | **H2** interrupt-pressure | the user interrupts an unusually large share of recent tasks | theme-note |
 | **H3** test-fail-streak | consecutive tasks report a failing test | theme-note |
 | **H4** bare-match-streak | the loop keeps proceeding bare on a similar task shape | improve-now* |
+| **H5** route-cost-outlier | a mechanical-shaped task was routed to the Opus model tier | theme-note |
 | **H6** cache-efficiency-floor | prompt-cache efficiency drops below a healthy floor | theme-note |
 | **H7** rework-signal | the user self-scores `rework` as major repeatedly | improve-now |
 | **H8** positive-streak | a resource sustains a long clean run | no-action |
@@ -201,11 +202,13 @@ The active seed rules, by name and intent:
 \* H4 files a `registry/candidates/` stub for a human — the loop never
 auto-creates a resource from a bare-match streak.
 
-The file also has a **`## Planned`** lane for rules that are fully specified but
-whose metric is not in the store yet, so the engine parses them as PLANNED and
-never evaluates them, and their ids stay reserved. The seed there is **H5
-route-cost-outlier** (mechanical work routed to the Opus tier), which needs a
-task-shape/route-tier field at ANNOUNCE time that the schema does not carry yet.
+**H5 route-cost-outlier** is active: its route tier is derived from the task
+record's `models` field (the dominant model by `out` tokens, mapped through a
+substring match — `opus`/`sonnet`/`haiku`, `fable`/`mythos` → `session`, else
+`unknown`), and its task shape comes from the `--task-shape` label
+`score_task.py` writes onto the score record. A hit is a task labeled
+`mechanical` whose dominant model is `opus`; tasks with no shape label are
+ignored.
 
 `heuristics_eval.py --task-id <id>` computes each rule's window over the metric
 history and prints every rule that fired with its computed value, threshold, and
