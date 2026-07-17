@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`grill-me` skill** — an adversarial plan-stress-testing interview (one
+  tough question at a time, each with a recommended answer, no action until
+  shared understanding). Vendored from Matt Pocock's `mattpocock/skills`
+  (MIT), with the upstream stub/companion pair merged into a single
+  `payload/skills/grill-me/SKILL.md`.
+- **`react-best-practices` skill** — Vercel Engineering's 70-rule React and
+  Next.js performance catalog (`vercel-labs/agent-skills`, MIT): `SKILL.md`
+  index plus 72 per-rule files under `rules/` with before/after examples; the
+  compiled `AGENTS.md` duplicate was dropped. The skill library grows to 172
+  skills; both new skills are MANIFEST-linked and cataloged.
 - **Read-guard hook** (`payload/hooks/read-guard.sh`, PreToolUse on Read) —
   hard-blocks (permission deny) reads of file classes that should never enter
   context (lockfiles, minified or bundled assets, source maps, JSONL session
