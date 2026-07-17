@@ -108,5 +108,116 @@ class TestParseUsageText(unittest.TestCase):
             up.parse_usage_text(bad)
 
 
+class TestBuildStatus(unittest.TestCase):
+    PARSED = {
+        "session_pct": 42, "weekly_pct": 68,
+        "session_resets_at": "2026-07-17T19:00:00Z",
+        "weekly_resets_at": "2026-07-21T00:00:00Z",
+    }
+
+    def test_adds_polled_at_in_iso_utc_z_format(self):
+        now = datetime(2026, 7, 17, 14, 32, 0, tzinfo=timezone.utc)
+        self.assertEqual(up.build_status(self.PARSED, now=now)["polled_at"],
+                         "2026-07-17T14:32:00Z")
+
+    def test_exact_schema_keys_order_and_types(self):
+        now = datetime(2026, 7, 17, 14, 32, 0, tzinfo=timezone.utc)
+        status = up.build_status(self.PARSED, now=now)
+        self.assertEqual(
+            list(status.keys()),
+            ["polled_at", "session_pct", "weekly_pct",
+             "session_resets_at", "weekly_resets_at"],
+        )
+        self.assertIsInstance(status["polled_at"], str)
+        self.assertIsInstance(status["session_pct"], int)
+        self.assertIsInstance(status["weekly_pct"], int)
+        self.assertIsInstance(status["session_resets_at"], str)
+        self.assertIsInstance(status["weekly_resets_at"], str)
+
+
+class TestAtomicWrite(unittest.TestCase):
+    def test_writes_final_file_and_leaves_no_tmp(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / "state" / "usage" / "status.json"
+            obj = {"polled_at": "2026-07-17T14:32:00Z", "session_pct": 42,
+                   "weekly_pct": 68, "session_resets_at": "2026-07-17T19:00:00Z",
+                   "weekly_resets_at": "2026-07-21T00:00:00Z"}
+            up.atomic_write_json(path, obj)
+            self.assertEqual(json.loads(path.read_text()), obj)
+            self.assertFalse(pathlib.Path(str(path) + ".tmp").exists())
+
+    def test_uses_tmp_then_rename(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / "status.json"
+            seen = {}
+            real_rename = os.rename
+
+            def spy_rename(src, dst):
+                seen["src"], seen["dst"] = str(src), str(dst)
+                seen["tmp_existed"] = pathlib.Path(src).exists()
+                seen["dest_absent"] = not pathlib.Path(dst).exists()
+                return real_rename(src, dst)
+
+            os.rename = spy_rename
+            try:
+                up.atomic_write_json(path, {"a": 1})
+            finally:
+                os.rename = real_rename
+            self.assertEqual(seen["src"], str(path) + ".tmp")
+            self.assertEqual(seen["dst"], str(path))
+            self.assertTrue(seen["tmp_existed"])
+            self.assertTrue(seen["dest_absent"])
+
+
+class TestPollOrchestration(unittest.TestCase):
+    def _paths(self, d):
+        return (pathlib.Path(d) / "state" / "usage" / "status.json",
+                pathlib.Path(d) / "logs" / "usage_poll.log")
+
+    def test_successful_poll_writes_cache(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache_path, log_path = self._paths(d)
+            up.poll(cache_path, log_path, storage_state_path="/unused",
+                    now=datetime(2026, 7, 17, 14, 32, tzinfo=timezone.utc),
+                    fetch=lambda ssp: ("https://claude.ai/settings/usage",
+                                       SAMPLE_USAGE_HTML))
+            data = json.loads(cache_path.read_text())
+            self.assertEqual(data["session_pct"], 42)
+            self.assertEqual(data["weekly_pct"], 68)
+            self.assertEqual(data["polled_at"], "2026-07-17T14:32:00Z")
+
+    def test_login_redirect_leaves_existing_cache_untouched(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache_path, log_path = self._paths(d)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text('{"stale": true}')
+            up.poll(cache_path, log_path, storage_state_path="/unused",
+                    fetch=lambda ssp: ("https://claude.ai/login", "<h1>Sign in</h1>"))
+            self.assertEqual(json.loads(cache_path.read_text()), {"stale": True})
+            self.assertIn("login", log_path.read_text())
+
+    def test_dom_drift_leaves_cache_untouched(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache_path, log_path = self._paths(d)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text('{"stale": true}')
+            up.poll(cache_path, log_path, storage_state_path="/unused",
+                    fetch=lambda ssp: ("https://claude.ai/settings/usage",
+                                       "<h1>totally different page</h1>"))
+            self.assertEqual(json.loads(cache_path.read_text()), {"stale": True})
+            self.assertIn("parse", log_path.read_text().lower())
+
+    def test_fetch_error_leaves_cache_untouched_and_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache_path, log_path = self._paths(d)
+
+            def boom(ssp):
+                raise RuntimeError("browser crashed")
+
+            up.poll(cache_path, log_path, storage_state_path="/unused", fetch=boom)
+            self.assertFalse(cache_path.exists())
+            self.assertIn("browser/fetch error", log_path.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

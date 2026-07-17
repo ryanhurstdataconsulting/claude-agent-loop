@@ -14,6 +14,7 @@ cache file this writes. Any poll failure is logged and leaves the existing cache
 untouched, and the process always exits 0 so a failed poll never breaks the
 launchd job.
 """
+import json
 import os
 import pathlib
 import re
@@ -148,3 +149,60 @@ def _fetch_page_text(storage_state_path):
             return page.url, page.inner_text("body")
         finally:
             browser.close()
+
+
+def build_status(parsed, now=None):
+    """Add polled_at and return the full status.json object in the spec's exact
+    field order: polled_at, session_pct, weekly_pct, session_resets_at,
+    weekly_resets_at."""
+    now = now or datetime.now(timezone.utc)
+    return {
+        "polled_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "session_pct": parsed["session_pct"],
+        "weekly_pct": parsed["weekly_pct"],
+        "session_resets_at": parsed["session_resets_at"],
+        "weekly_resets_at": parsed["weekly_resets_at"],
+    }
+
+
+def atomic_write_json(path, obj):
+    """Write `obj` as JSON to `path` atomically: serialize to a .tmp sibling, then
+    os.rename over the destination so a reader never sees a partial file."""
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = pathlib.Path(str(path) + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2)
+        f.write("\n")
+    os.rename(tmp, path)
+
+
+def poll(cache_path, log_path, storage_state_path=STORAGE_STATE_PATH,
+         now=None, fetch=None):
+    """Headless poll orchestration. On success, atomically write the cache. On a
+    login redirect, a parse failure (DOM drift), a browser/network error, or an
+    unwritable cache: log one line and leave the existing cache untouched. Never
+    raises."""
+    fetch = fetch or _fetch_page_text
+    try:
+        url, text = fetch(storage_state_path)
+    except Exception as e:
+        log_line(log_path,
+                 f"poll aborted: browser/fetch error, cache left untouched ({e!r})")
+        return
+    if "/login" in url:
+        log_line(log_path,
+                 "poll aborted: claude.ai redirected to login; session expired, "
+                 "cache left untouched — re-run 'usage_poll.py --login'")
+        return
+    try:
+        parsed = parse_usage_text(text)
+    except Exception as e:
+        log_line(log_path,
+                 f"poll aborted: could not parse usage page (DOM drift?), "
+                 f"cache left untouched ({e!r})")
+        return
+    try:
+        atomic_write_json(cache_path, build_status(parsed, now))
+    except Exception as e:
+        log_line(log_path, f"poll aborted: could not write cache ({e!r})")
