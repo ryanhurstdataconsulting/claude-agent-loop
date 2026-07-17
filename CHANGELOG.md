@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Read-guard hook** (`payload/hooks/read-guard.sh`, PreToolUse on Read) —
+  hard-blocks (permission deny) reads of file classes that should never enter
+  context (lockfiles, minified or bundled assets, source maps, JSONL session
+  transcripts, log files, CSV/Parquet data files, and anything under
+  `node_modules/`, `dist/`, `build/`, `.vite/`, or `coverage/`), and
+  soft-nudges (allow + `additionalContext`) any read of a file over 1,000
+  lines or 100 KB made without `offset`/`limit`, prompting a narrow re-read.
+  Fail-open, never exits 2. Covered by the 16-case
+  `payload/tools/tests/test_read_guard.sh`. (Merged alongside 2.1.0 without a
+  changelog entry; recorded here.)
 - `score_task.py --task-shape {planning,creation,mechanical}` — an optional
   scoring-time label; when omitted, the score record carries no `task_shape`
   key at all.
@@ -21,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Seed `learning/HEURISTICS.md`: H5 moved from the "Planned (not yet
   computable)" lane into the active body; the emptied Planned section was
   removed.
+
+## [2.1.0] - 2026-07-15
+
+### Added
+
+- **Context-budget hook** (`payload/hooks/context-budget.sh`, PostToolUse) —
+  watches the session's context-window occupancy from the transcript tail and
+  steers the agent to a durable pause point before auto-compaction can destroy
+  working state: a single warning at 70% of the 150k-token budget, then a
+  checkpoint directive from 85% that repeats on every tool call until a resume
+  brief exists at `~/.claude/metrics/state/budget/checkpoints/<session>.md`. Fail-open,
+  always exits 0; kill switch `CONTEXT_BUDGET_DISABLE=1`. Covered by the
+  13-case `payload/tools/tests/test_context_budget.sh`, including a
+  fixed-string grammar regression on the emitted directive prose.
 
 ## [2.0.0] - 2026-07-07
 
