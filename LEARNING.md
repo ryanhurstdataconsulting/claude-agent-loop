@@ -194,7 +194,7 @@ The active seed rules, by name and intent:
 | **H2** interrupt-pressure | the user interrupts an unusually large share of recent tasks | theme-note |
 | **H3** test-fail-streak | consecutive tasks report a failing test | theme-note |
 | **H4** bare-match-streak | the loop keeps proceeding bare on a similar task shape | improve-now* |
-| **H5** route-cost-outlier | a mechanical-shaped task was routed to the Opus model tier | theme-note |
+| **H5** route-cost-outlier | a mechanical-shaped task is routed to the Opus model tier | theme-note |
 | **H6** cache-efficiency-floor | prompt-cache efficiency drops below a healthy floor | theme-note |
 | **H7** rework-signal | the user self-scores `rework` as major repeatedly | improve-now |
 | **H8** positive-streak | a resource sustains a long clean run | no-action |
