@@ -22,7 +22,7 @@
 # install.sh v2 (P1) is the sole consumer of this file: it walks these lines
 # and builds/repairs the symlink + copy-if-absent state on every run.
 
-# --- skills/ (170 dirs) + catalog --------------------------------------
+# --- skills/ (172 dirs) + catalog --------------------------------------
 link-dir skills/ab-test-design-and-power-analysis
 link-dir skills/accessibility-audit
 link-dir skills/accessibility-test-audit
@@ -101,6 +101,7 @@ link-dir skills/flaky-test-triage
 link-dir skills/generate-component-changelog
 link-dir skills/gitops-deployment-setup
 link-dir skills/golden-path-template-authoring
+link-dir skills/grill-me
 link-dir skills/iam-least-privilege-policy-authoring
 link-dir skills/idempotency-and-retry-design
 link-dir skills/idempotent-backfill-authoring
@@ -143,6 +144,7 @@ link-dir skills/prose-style-lint
 link-dir skills/quickstart-tutorial-generator
 link-dir skills/rag-pipeline-scaffolding
 link-dir skills/raid-log-maintainer
+link-dir skills/react-best-practices
 link-dir skills/read-only-diagnostic-query-pack
 link-dir skills/resource-loop
 link-dir skills/rfp-response-drafter
