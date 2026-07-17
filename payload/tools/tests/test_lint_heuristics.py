@@ -49,15 +49,15 @@ class TestLintHeuristics(unittest.TestCase):
     def test_seed_file_passes(self):
         self.assertEqual(lh.lint(SEED), [])
 
-    def test_parse_seed_returns_seven_active_and_one_planned(self):
+    def test_parse_seed_returns_eight_active_and_none_planned(self):
         rules = lh.parse_heuristics(SEED)
         active = [r for r in rules if not r["retired"] and not r["planned"]]
         planned = [r for r in rules if r["planned"]]
-        # H5 (route-cost-outlier) is parked under ## Planned — its metric is not
-        # in the store yet — so it is parsed as PLANNED, not ACTIVE.
+        # H5 (route-cost-outlier) is now active: its metric (models -> task_shape)
+        # is in the store, so the seed carries no Planned section anymore.
         self.assertEqual([r["id"] for r in active],
-                         ["H1", "H2", "H3", "H4", "H6", "H7", "H8"])
-        self.assertEqual([r["id"] for r in planned], ["H5"])
+                         ["H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8"])
+        self.assertEqual([r["id"] for r in planned], [])
         by_id = {r["id"]: r for r in active}
         # THEN action parses to its first token even with a trailing parenthetical.
         self.assertEqual(by_id["H1"]["then"], "improve-now")

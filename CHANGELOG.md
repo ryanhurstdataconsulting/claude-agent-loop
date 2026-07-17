@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `score_task.py --task-shape {planning,creation,mechanical}` — an optional
+  scoring-time label; when omitted, the score record carries no `task_shape`
+  key at all.
+- The H5 (route-cost-outlier) evaluator in `heuristics_eval.py`: the route
+  tier is derived from each task record's `models` field (dominant model by
+  `out` tokens; only Opus is a hit, and the session tier never is), joined to
+  the score's `task_shape`. H5 is now the eighth evaluable rule, which also
+  makes rulebooks with an ACTIVE H5 lint-clean.
+
+### Changed
+- Seed `learning/HEURISTICS.md`: H5 moved from the "Planned (not yet
+  computable)" lane into the active body; the emptied Planned section was
+  removed.
+
 ## [2.0.0] - 2026-07-07
 
 Version 2 turns the Resource Loop from an open dispatch loop into a closed,

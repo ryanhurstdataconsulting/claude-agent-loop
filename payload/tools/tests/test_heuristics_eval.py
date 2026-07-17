@@ -48,7 +48,7 @@ class TestHeuristicsEval(unittest.TestCase):
     # --- planting helpers ----------------------------------------------------
 
     def _task(self, task_id, day, resources=None, error_rate=0.0,
-              cache=0.85, interrupted=0, failed=0, source="task"):
+              cache=0.85, interrupted=0, failed=0, source="task", models=None):
         # cache defaults high and error/interrupt/fail default clean so an
         # isolated rule under test is the only thing that can fire. Passing
         # ``cache=None`` OMITS the cache_efficiency field entirely (used to
@@ -62,14 +62,20 @@ class TestHeuristicsEval(unittest.TestCase):
         }
         if cache is not None:
             rec["cache_efficiency"] = cache
+        if models is not None:
+            rec["models"] = models
         hm._append_record(str(self.metrics), rec)
 
-    def _score(self, task_id, day, outcome="good", rework="none"):
-        hm._append_record(str(self.metrics), {
+    def _score(self, task_id, day, outcome="good", rework="none",
+               task_shape=None):
+        rec = {
             "schema": 1, "kind": "score", "task_id": task_id,
             "project": "demo_project", "ts_end": _ts(day),
             "scales": {"outcome": outcome, "rework": rework},
-        })
+        }
+        if task_shape is not None:
+            rec["task_shape"] = task_shape
+        hm._append_record(str(self.metrics), rec)
 
     def _bare(self, task_id, day, session_id, project="demo_project"):
         # A "proceeding bare" announcement record (H4 counts these). Planted as
@@ -472,6 +478,63 @@ class TestHeuristicsEval(unittest.TestCase):
         h7 = self._fired(payload)["H7"]
         self.assertEqual(h7["effective_action"], "improve-now")
         self.assertIsNone(h7["downgrade_reason"])
+
+    # --- H5 route-cost-outlier ------------------------------------------------
+
+    _OPUS = {"claude-opus-4-8": {"in": 100, "out": 900}}
+    _SONNET = {"claude-sonnet-5": {"in": 100, "out": 900}}
+    _FABLE = {"claude-fable-5": {"in": 100, "out": 900}}
+
+    def _plant_labeled(self, shapes_models):
+        """shapes_models: list of (task_shape or None, models dict or None)."""
+        for i, (shape, models) in enumerate(shapes_models, 1):
+            tid = "t%d" % i
+            self._task(tid, min(i, 28), models=models)
+            if shape is not None:
+                self._score(tid, min(i, 28), task_shape=shape)
+
+    def test_h5_fires_end_to_end_with_theme_note(self):
+        rows = [("creation", self._SONNET)] * 8
+        rows += [("mechanical", self._OPUS), ("mechanical", self._OPUS)]
+        self._plant_labeled(rows)
+        rc, payload, err = self._run_json(["--window"])
+        self.assertEqual(rc, 0, err)
+        fired = self._fired(payload)
+        self.assertIn("H5", fired)
+        f = fired["H5"]
+        self.assertEqual(f["computed"], 2)
+        self.assertEqual(f["metric"], "mechanical_tasks_routed_to_opus")
+        self.assertEqual(f["action"], "theme-note")
+        self.assertEqual(f["effective_action"], "theme-note")
+        self.assertEqual(f["scope"], "global")
+        self.assertEqual([e["task_id"] for e in f["evidence"]], ["t9", "t10"])
+        self.assertEqual(f["evidence"][0]["value"],
+                         "mechanical -> claude-opus-4-8")
+
+    def test_h5_below_threshold_does_not_fire(self):
+        rows = [("creation", self._SONNET)] * 9 + [("mechanical", self._OPUS)]
+        self._plant_labeled(rows)
+        rc, payload, err = self._run_json(["--window"])
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("H5", self._fired(payload))
+
+    def test_h5_session_model_mechanical_not_a_hit(self):
+        rows = [("creation", self._SONNET)] * 8
+        rows += [("mechanical", self._FABLE), ("mechanical", self._FABLE)]
+        self._plant_labeled(rows)
+        rc, payload, err = self._run_json(["--window"])
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("H5", self._fired(payload))
+
+    def test_h5_unlabeled_tasks_excluded_from_window(self):
+        # Eleven unlabeled tasks plus a single labeled mechanical+opus task:
+        # only the labeled one enters the population, which is below the
+        # 2-sample floor, so H5 stays quiet even though the one row is a hit.
+        rows = [(None, self._OPUS)] * 11 + [("mechanical", self._OPUS)]
+        self._plant_labeled(rows)
+        rc, payload, err = self._run_json(["--window"])
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("H5", self._fired(payload))
 
     # --- _priority_key ordering (I4) -----------------------------------------
 
