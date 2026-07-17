@@ -14,10 +14,12 @@ cache file this writes. Any poll failure is logged and leaves the existing cache
 untouched, and the process always exits 0 so a failed poll never breaks the
 launchd job.
 """
+import argparse
 import json
 import os
 import pathlib
 import re
+import sys
 from datetime import datetime, timezone
 
 # The current claude.ai usage page. If claude.ai moves this page, update here.
@@ -206,3 +208,40 @@ def poll(cache_path, log_path, storage_state_path=STORAGE_STATE_PATH,
         atomic_write_json(cache_path, build_status(parsed, now))
     except Exception as e:
         log_line(log_path, f"poll aborted: could not write cache ({e!r})")
+
+
+def build_arg_parser():
+    ap = argparse.ArgumentParser(
+        prog="usage_poll.py",
+        description="Poll claude.ai's usage page and cache the session/weekly "
+                    "limit percentages for the usage-budget hook.",
+    )
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--login", action="store_true",
+                      help="Open a visible browser once to authenticate to "
+                           "claude.ai; persist the session.")
+    mode.add_argument("--poll", action="store_true",
+                      help="(default) Headless poll: refresh the cached usage "
+                           "status.")
+    return ap
+
+
+def main(argv=None):
+    args = build_arg_parser().parse_args(argv)
+    cache_path, log_path = resolve_paths()
+    try:
+        if args.login:
+            path = login()
+            print(f"Saved claude.ai session to {path}")
+        else:
+            poll(cache_path, log_path)
+    except Exception as e:  # fail-open: a failed run must never break launchd.
+        try:
+            log_line(log_path, f"unexpected top-level error, exiting 0 ({e!r})")
+        except Exception:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

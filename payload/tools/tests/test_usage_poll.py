@@ -247,5 +247,83 @@ class TestPollOrchestration(unittest.TestCase):
             self.assertIn("poll aborted: could not write cache", log_lines[0])
 
 
+class TestCli(unittest.TestCase):
+    def test_default_mode_is_poll(self):
+        self.assertFalse(up.build_arg_parser().parse_args([]).login)
+
+    def test_login_flag_selects_login(self):
+        self.assertTrue(up.build_arg_parser().parse_args(["--login"]).login)
+
+    def test_login_and_poll_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            up.build_arg_parser().parse_args(["--login", "--poll"])
+
+    def test_main_dispatches_to_poll_by_default(self):
+        called = {}
+        orig_poll, orig_login = up.poll, up.login
+        up.poll = lambda *a, **k: called.setdefault("poll", True)
+        up.login = lambda *a, **k: called.setdefault("login", True)
+        try:
+            rc = up.main([])
+        finally:
+            up.poll, up.login = orig_poll, orig_login
+        self.assertEqual(rc, 0)
+        self.assertTrue(called.get("poll"))
+        self.assertNotIn("login", called)
+
+    def test_main_dispatches_to_login_on_flag(self):
+        called = {}
+        orig_poll, orig_login = up.poll, up.login
+        up.poll = lambda *a, **k: called.setdefault("poll", True)
+        up.login = lambda *a, **k: (called.setdefault("login", True),
+                                    pathlib.Path("/x"))[1]
+        try:
+            rc = up.main(["--login"])
+        finally:
+            up.poll, up.login = orig_poll, orig_login
+        self.assertEqual(rc, 0)
+        self.assertTrue(called.get("login"))
+        self.assertNotIn("poll", called)
+
+
+class TestSchemaLock(unittest.TestCase):
+    """Locks the exact status.json contract the usage-budget hook (Task 6) reads.
+    If this test breaks, the hook's cache read breaks with it."""
+
+    def test_end_to_end_schema_matches_spec_verbatim(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache_path = pathlib.Path(d) / "state" / "usage" / "status.json"
+            log_path = pathlib.Path(d) / "logs" / "usage_poll.log"
+            up.poll(cache_path, log_path, storage_state_path="/unused",
+                    now=datetime(2026, 7, 17, 14, 32, tzinfo=timezone.utc),
+                    fetch=lambda ssp: ("https://claude.ai/settings/usage",
+                                       SAMPLE_USAGE_HTML))
+            data = json.loads(cache_path.read_text())
+            self.assertEqual(
+                list(data.keys()),
+                ["polled_at", "session_pct", "weekly_pct",
+                 "session_resets_at", "weekly_resets_at"])
+            self.assertEqual(data, {
+                "polled_at": "2026-07-17T14:32:00Z",
+                "session_pct": 42,
+                "weekly_pct": 68,
+                "session_resets_at": "2026-07-17T19:00:00Z",
+                "weekly_resets_at": "2026-07-21T00:00:00Z",
+            })
+
+
+class TestLogDiagnosticHygiene(unittest.TestCase):
+    def test_log_messages_have_no_double_spaces(self):
+        with tempfile.TemporaryDirectory() as d:
+            log_path = pathlib.Path(d) / "logs" / "usage_poll.log"
+            up.log_line(
+                log_path,
+                "poll aborted: claude.ai redirected to login; session expired, "
+                "cache left untouched — re-run 'usage_poll.py --login'")
+            # strip the leading "YYYY-...Z " timestamp, then check the message body
+            msg = log_path.read_text().split(" ", 1)[1]
+            self.assertNotIn("  ", msg)
+
+
 if __name__ == "__main__":
     unittest.main()
