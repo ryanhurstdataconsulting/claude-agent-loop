@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Read-guard hook** (`payload/hooks/read-guard.sh`, PreToolUse on Read) —
+  hard-blocks (permission deny) reads of file classes that should never enter
+  context (lockfiles, minified or bundled assets, source maps, JSONL session
+  transcripts, log files, CSV/Parquet data files, and anything under
+  `node_modules/`, `dist/`, `build/`, `.vite/`, or `coverage/`), and
+  soft-nudges (allow + `additionalContext`) any read of a file over 1,000
+  lines or 100 KB made without `offset`/`limit`, prompting a narrow re-read.
+  Fail-open, never exits 2. Covered by the 16-case
+  `payload/tools/tests/test_read_guard.sh`. (Merged alongside 2.1.0 without a
+  changelog entry; recorded here.)
+- `score_task.py --task-shape {planning,creation,mechanical}` — an optional
+  scoring-time label; when omitted, the score record carries no `task_shape`
+  key at all.
+- The H5 (route-cost-outlier) evaluator in `heuristics_eval.py`: the route
+  tier is derived from each task record's `models` field (dominant model by
+  `out` tokens; only Opus is a hit, and the session tier never is), joined to
+  the score's `task_shape`. H5 is now the eighth evaluable rule, which also
+  makes rulebooks with an ACTIVE H5 lint-clean.
+
+### Changed
+- Seed `learning/HEURISTICS.md`: H5 moved from the "Planned (not yet
+  computable)" lane into the active body; the emptied Planned section was
+  removed.
+
 ## [2.1.0] - 2026-07-15
 
 ### Added

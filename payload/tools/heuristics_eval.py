@@ -85,20 +85,23 @@ COARSE_DOMINANCE = 0.5        # coarse/total above this = coarse-dominated
 # The per-resource improve-now rules subject to the downgrade. H4 is EXEMPT: it
 # is a resource-GAP signal (not resource-attributed) and already routes its
 # improve-now to an owner-gated candidate stub, never an autonomous commit.
+# Downgrade exists only for improve-now rules (coarse evidence softens their
+# THEN to theme-note); H5 is theme-note by design and must NOT join this set.
 DOWNGRADE_RULES = {"H1", "H7"}
 
 # The rule ids the engine can actually evaluate — one per dispatch branch in
 # ``evaluate_rule``. ``lint_heuristics`` imports this set to REFUSE an ACTIVE
 # rule id with no evaluator (a self-added rule would otherwise commit clean then
 # be silently skipped). Keep this in lockstep with ``evaluate_rule``.
-EVALUABLE_RULES = {"H1", "H2", "H3", "H4", "H6", "H7", "H8"}
+EVALUABLE_RULES = {"H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8"}
 
 # Which rules read a per-resource window vs a global task window. H4 is
 # session-scoped (bare-match streak, falls back to project-recent). H5 is
-# PLANNED (parked in HEURISTICS.md's ## Planned section — no route-tier /
-# task-shape signal in the metrics schema yet) and never reaches the engine.
+# global: its route tier is derived from each task record's ``models`` field
+# (dominant model by ``out`` tokens) and its task shape from the joined score
+# record's ``task_shape`` key (score_task.py --task-shape).
 PER_RESOURCE = {"H1", "H7", "H8"}
-GLOBAL_TASK = {"H2", "H3", "H6"}
+GLOBAL_TASK = {"H2", "H3", "H5", "H6"}
 SESSION_RULES = {"H4"}
 
 _OR_MORE = re.compile(r"(\d+)\s+or\s+more")
@@ -412,6 +415,80 @@ def _eval_rework_signal(rule, population, scores, scope):
     }
 
 
+_KNOWN_SHAPES = {"planning", "creation", "mechanical"}
+_TIER_MAP = (("opus", "opus"), ("sonnet", "sonnet"), ("haiku", "haiku"),
+             ("fable", "session"), ("mythos", "session"))
+
+
+def _dominant_model(rec):
+    """The model id with the largest ``out`` token count on this task record.
+
+    Missing or non-numeric ``out`` counts as 0; ties break lexicographically
+    by model id so the result is deterministic. Returns None when the record
+    has no usable ``models`` dict.
+    """
+    models = rec.get("models") or {}
+    if not isinstance(models, dict) or not models:
+        return None
+
+    def _out(mid):
+        usage = models.get(mid)
+        val = usage.get("out") if isinstance(usage, dict) else None
+        return val if isinstance(val, (int, float)) else 0
+
+    return sorted(models, key=lambda m: (-_out(m), str(m)))[0]
+
+
+def _route_tier(rec):
+    """Map a task record's dominant model to a route tier.
+
+    Substring match, first hit wins: opus / sonnet / haiku, then fable or
+    mythos -> "session" (a subagent inheriting the session model is not a
+    per-dispatch routing decision). Anything else -> "unknown". Only "opus"
+    ever counts as an H5 hit.
+    """
+    mid = _dominant_model(rec)
+    if mid is None:
+        return "unknown"
+    low = str(mid).lower()
+    for needle, tier in _TIER_MAP:
+        if needle in low:
+            return tier
+    return "unknown"
+
+
+def _eval_route_cost(rule, tasks, scores):
+    """H5 route-cost-outlier (global): mechanical-shaped tasks whose dominant
+    model was Opus, over the last N tasks the owner labeled with a shape at
+    scoring time. Unscored or unlabeled tasks never enter the window, so they
+    can neither fire the rule nor pad the sample floor.
+    """
+    _cmp_op, count = parse_threshold(rule["fields"]["THRESHOLD"])
+    window, explicit_min = parse_window(rule["fields"]["WINDOW"])
+    labeled = [r for r in tasks
+               if (scores.get(r.get("task_id")) or {}).get("task_shape")
+               in _KNOWN_SHAPES]
+    win = labeled[-window:] if window else labeled
+    need = _min_samples(window, explicit_min, count_threshold=count)
+    if len(win) < need:
+        return None
+    hits = [r for r in win
+            if scores[r["task_id"]].get("task_shape") == "mechanical"
+            and _route_tier(r) == "opus"]
+    if len(hits) < count:
+        return None
+    return {
+        "rule": rule["id"], "action": rule["then"], "scope": "global",
+        "metric": "mechanical_tasks_routed_to_opus", "computed": len(hits),
+        "comparator": ">=", "threshold": int(count),
+        "samples": len(win), "window": window, "min_samples": need,
+        "coarse_samples": _coarse_count(hits),
+        "precise_samples": _precise_count(hits),
+        "evidence": [_ev_row(r, "mechanical -> %s" % _dominant_model(r))
+                     for r in hits],
+    }
+
+
 def _eval_positive_streak(rule, population, scores, outcome_order, scope):
     """H8 positive-streak (per-resource): a long run of clean scored outcomes
     (outcome >= good AND rework = none) — fires no-action (positive signal)."""
@@ -521,6 +598,10 @@ def evaluate_rule(rule, ctx):
                 out.append(f)
         elif hid == "H3":
             f = _eval_test_fail_streak(rule, ctx.tasks)
+            if f:
+                out.append(f)
+        elif hid == "H5":
+            f = _eval_route_cost(rule, ctx.tasks, ctx.scores)
             if f:
                 out.append(f)
         elif hid == "H7":

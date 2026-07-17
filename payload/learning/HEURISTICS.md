@@ -44,6 +44,15 @@ LEARN step can act on the highest-priority firing.
 - CONFIDENCE: seed
 - LAST-REVIEWED: 2026-07-07
 
+## H5 — route-cost-outlier
+- WHEN: a task classified as mechanical work is routed to the Opus model tier
+- WINDOW: last 10 tasks
+- THRESHOLD: 2 or more mechanical tasks routed to Opus
+- THEN: theme-note
+- CONFIDENCE: seed
+- LAST-REVIEWED: 2026-07-16
+- NOTE: the route tier is derived from the task record's `models` field (dominant model by `out` tokens); the task shape comes from `score_task.py --task-shape`; tasks without a shape label are ignored
+
 ## H6 — cache-efficiency-floor
 - WHEN: prompt-cache efficiency across recent tasks drops below a healthy floor
 - WINDOW: last 10 tasks
@@ -67,17 +76,3 @@ LEARN step can act on the highest-priority firing.
 - THEN: no-action (recorded as positive signal; the resource's own alert thresholds are raised as a side effect, not as a separate THEN value)
 - CONFIDENCE: seed
 - LAST-REVIEWED: 2026-07-06
-
-## Planned (not yet computable)
-
-These rules are fully specified but their metric is not in the store yet, so the
-engine parses them as PLANNED and never evaluates them. Their ids stay reserved.
-
-## H5 — route-cost-outlier
-- WHEN: a task classified as mechanical work is routed to the Opus model tier
-- WINDOW: last 10 tasks
-- THRESHOLD: 2 or more mechanical tasks routed to Opus
-- THEN: theme-note
-- CONFIDENCE: seed
-- LAST-REVIEWED: 2026-07-07
-- NOTE: needs a task-shape/route-tier field at ANNOUNCE time — not in the metrics schema yet

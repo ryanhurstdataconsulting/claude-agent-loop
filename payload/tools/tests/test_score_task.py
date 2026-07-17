@@ -258,6 +258,31 @@ class TestScoreTask(unittest.TestCase):
         self.assertEqual(self.scales.read_text(), before)   # reverted
         self.assertNotIn("broken", self.scales.read_text())
 
+    # --- task shape (H5 route-cost signal) ------------------------------------
+
+    def test_task_shape_flag_lands_on_record(self):
+        rc, _, err = self._run(self._score_args(
+            "--task-id", "session-shape1",
+            "--scale", "outcome=good",
+            "--task-shape", "mechanical"))
+        self.assertEqual(rc, 0, err)
+        score = [r for r in _records(self._shard()) if r["kind"] == "score"][-1]
+        self.assertEqual(score["task_shape"], "mechanical")
+
+    def test_task_shape_omitted_leaves_key_absent(self):
+        rc, _, err = self._run(self._score_args(
+            "--task-id", "session-shape2", "--scale", "outcome=good"))
+        self.assertEqual(rc, 0, err)
+        score = [r for r in _records(self._shard()) if r["kind"] == "score"][-1]
+        self.assertNotIn("task_shape", score)
+
+    def test_task_shape_invalid_value_rejected(self):
+        with self.assertRaises(SystemExit) as ctx:
+            self._run(self._score_args(
+                "--task-id", "session-shape3", "--scale", "outcome=good",
+                "--task-shape", "huge"))
+        self.assertNotEqual(ctx.exception.code, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
