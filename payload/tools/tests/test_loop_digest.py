@@ -264,6 +264,85 @@ class TestUnpushed(unittest.TestCase):
         self.assertIsNone(ld._unpushed(solo))
 
 
+class TestUnpushedPrintGate(unittest.TestCase):
+    """main() must only print the "framework commits are unpushed" console
+    hint when _unpushed(framework_repo) is genuinely non-zero — not
+    unconditionally on every run."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        self.base = pathlib.Path(self.td.name)
+        self.learning = self.base / "learning"
+        self.learning.mkdir()
+        self.metrics = self.base / "metrics"
+        self.metrics.mkdir()
+
+    def _git(self, repo, *args):
+        import subprocess
+        return subprocess.run(["git", "-C", str(repo), *args],
+                              capture_output=True, text=True)
+
+    def _init_repo(self, name):
+        repo = self.base / name
+        repo.mkdir()
+        self._git(repo, "init", "-q")
+        self._git(repo, "config", "user.email", "t@e.co")
+        self._git(repo, "config", "user.name", "t")
+        self._git(repo, "commit", "--allow-empty", "-qm", "c0")
+        return repo
+
+    def _write_log(self, fwb):
+        (self.learning / "AUTO_COMMITS.log").write_text(
+            f"{EARLIER}\t{fwb}\tabc1234\tloop: docs one\t-\n", encoding="utf-8")
+
+    def _run(self, fwrepo):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = ld.main([
+                "--learning-dir", str(self.learning),
+                "--metrics-dir", str(self.metrics),
+                "--framework-repo", str(fwrepo),
+                "--local-root", str(self.base / "loc-unused"),
+                "--now", NOW,
+            ])
+        return rc, buf.getvalue()
+
+    def test_no_upstream_configured_no_print(self):
+        fwrepo = self._init_repo("fw_no_upstream")
+        self._write_log(fwrepo.name)
+        rc, out = self._run(fwrepo)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("framework commits are unpushed", out)
+
+    def test_upstream_fully_pushed_no_print(self):
+        import subprocess
+        remote = self.base / "remote_pushed.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)])
+        fwrepo = self._init_repo("fw_pushed")
+        self._git(fwrepo, "remote", "add", "origin", str(remote))
+        self._git(fwrepo, "push", "-q", "-u", "origin", "HEAD:main")
+        self.assertEqual(ld._unpushed(fwrepo), "0")
+        self._write_log(fwrepo.name)
+        rc, out = self._run(fwrepo)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("framework commits are unpushed", out)
+
+    def test_upstream_with_unpushed_commits_prints(self):
+        import subprocess
+        remote = self.base / "remote_ahead.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)])
+        fwrepo = self._init_repo("fw_ahead")
+        self._git(fwrepo, "remote", "add", "origin", str(remote))
+        self._git(fwrepo, "push", "-q", "-u", "origin", "HEAD:main")
+        self._git(fwrepo, "commit", "--allow-empty", "-qm", "c1")
+        self.assertEqual(ld._unpushed(fwrepo), "1")
+        self._write_log(fwrepo.name)
+        rc, out = self._run(fwrepo)
+        self.assertEqual(rc, 0)
+        self.assertIn("framework commits are unpushed", out)
+
+
 class TestNeverPushes(unittest.TestCase):
     """The tool may DISPLAY a manual push command but must never EXECUTE one."""
 
