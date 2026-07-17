@@ -190,6 +190,7 @@ decision; `AGENT_LOOP_CONTRIBUTE=0` turns the whole thing off.
 | `auto-update.sh` | SessionStart + UserPromptSubmit | Fast-forward-pulls the package from git on a new session or after a 12-hour idle gap; skips (and nudges) on a dirty or diverged repo; runs `install.sh --no-plugins` when the MANIFEST changed. |
 | `precompact-event.sh` | PreCompact | Records each compaction; on the second in one session, offers the opt-in TOKEN MINIMIZER EXTREME context-discipline rule set (never enables it without approval). |
 | `harvest-metrics.sh` | SubagentStop + SessionEnd | Harvests objective metrics per task — tokens by model, cache efficiency, tool errors, tests passed/failed, duration — into the local metrics store. |
+| `context-budget.sh` | PostToolUse | Watches context-window occupancy from the session transcript; warns at 70% of the 150k budget and, from 85%, repeats a pause-point directive on every tool call until a resume-brief checkpoint file exists. |
 
 ### Role agents (the AGENT layer)
 

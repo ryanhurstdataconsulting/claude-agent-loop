@@ -162,6 +162,11 @@ The registry is inert until a session runs the loop over it:
   **`payload/hooks/precompact-event.sh`** (PreCompact) passively record the
   objective metrics the SCORE and LEARN steps read back. See the metrics store
   contract below, and `LEARNING.md` for the whole self-learning layer.
+- **`payload/hooks/context-budget.sh`** (PostToolUse) watches the session's
+  context-window occupancy from the transcript tail and steers the agent to a
+  durable pause point — one warning at 70% of the token budget, then a repeating
+  checkpoint directive from 85% until a resume brief exists on disk. It acts
+  *before* compaction; `precompact-event.sh` records and escalates *after* it.
 
 ### 3. Doc-cascade layer — the instruction precedence
 
