@@ -172,19 +172,39 @@ stdin (the hook JSON payload) and pipes it, plus `METRICS_DIR`, into a
   `USAGE_BUDGET_CRIT_PCT` (default 85) — the exact same default values as
   `CONTEXT_BUDGET_WARN_PCT` / `CONTEXT_BUDGET_CRIT_PCT`, for a consistent
   mental model across both hooks.
-- **Firing behavior**, mirroring `context-budget.sh` exactly:
-  - `pct >= WARN_PCT` and WARN not yet fired this session → emit one WARN
-    message, set `warn_fired = true`.
-  - `pct >= CRIT_PCT` → emit a CRIT directive. If this is the first time
-    CRIT fires, record `crit_since = <now>`. On every subsequent tool
-    call, keep repeating the CRIT directive **unless** the checkpoint file
-    at `$METRICS_DIR/state/usage/checkpoints/<safe_session_id>.md` has an
-    mtime `>= crit_since` — i.e., re-arm only after a checkpoint is
-    written *after* CRIT first fired, not before.
-  - `USAGE_BUDGET_CHECK_SECS` (default 30, same as
-    `CONTEXT_BUDGET_CHECK_SECS`) throttles how often the hook re-reads
-    the cache/state files per session, to keep the common case (no
-    threshold crossed) cheap.
+- **Firing behavior**, mirroring `context-budget.sh`'s state machine
+  exactly (verified line-by-line against `payload/hooks/context-budget.sh`,
+  not just its stated intent):
+  - **CRIT active and unacknowledged** (`crit_since is not None and not
+    checkpoint_ack`) is checked on **every tool call, with no throttle** —
+    `USAGE_BUDGET_CHECK_SECS` does not apply to this branch, matching
+    `context-budget.sh`'s explicit "no throttle at this tier" behavior.
+    Each call in this state: if `pct` has dropped back below `WARN_PCT`,
+    immediately re-arm (see reset rule below) instead of nagging. Otherwise,
+    check the checkpoint file's mtime — if it is `>= crit_since`, set
+    `checkpoint_ack = true` and go silent (see next bullet); if not, emit
+    the CRIT directive again.
+  - **CRIT acknowledged** (`checkpoint_ack = true`): the hook stays silent
+    on this session even while `pct` remains `>= CRIT_PCT` — the
+    acknowledgment holds until `pct` drops back below `WARN_PCT`, at which
+    point it fully re-arms (see reset rule below). This state is included
+    in the throttled "normal path" below.
+  - **Normal path** (CRIT not currently active-and-unacknowledged — i.e.
+    before CRIT first fires, or after it has been acknowledged): throttled
+    by `USAGE_BUDGET_CHECK_SECS` (default 30, same as
+    `CONTEXT_BUDGET_CHECK_SECS`) to keep the common case (no threshold
+    crossed) cheap. On each un-throttled check in this path: if
+    `pct >= CRIT_PCT` and `crit_since` is not already set, record
+    `crit_since = <now>` and emit the CRIT directive (this transitions the
+    session into the "CRIT active and unacknowledged" branch above). Else
+    if `pct >= WARN_PCT` and WARN has not yet fired this session, emit one
+    WARN message and set `warn_fired = true` (no repeats).
+  - **Reset-on-drop (re-arm)**: whenever `pct` drops back below
+    `WARN_PCT` and any state flag is set (`warn_fired`, `crit_since`, or
+    `checkpoint_ack`), the hook resets all four per-session state fields
+    to their defaults. This is deliberate, not incidental — it is how a
+    session that pauses, checkpoints, and later climbs back into WARN/CRIT
+    territory gets fresh warnings instead of staying permanently muted.
 - **Message text:** WARN and CRIT strings are distinct, fixed strings
   (not templated per-call beyond the percentage and reset time), so the
   shell test suite's grammar regression test has stable text to assert
@@ -202,7 +222,7 @@ stdin (the hook JSON payload) and pipes it, plus `METRICS_DIR`, into a
 |---|---|
 | `payload/tools/usage_poll.py` | The poller (login mode + poll mode) |
 | `payload/hooks/usage-budget.sh` | The `PostToolUse` hook |
-| `payload/launchd/com.hdc.claude-agent-loop.usage-poll.plist` | launchd user-agent job template (installed by the existing install flow, same as other payload files) |
+| `payload/launchd/com.hdc.claude-agent-loop.usage-poll.plist` | launchd user-agent job template, installed by a manual one-time step (see Scheduling) — `install.sh`'s MANIFEST mechanism only ever links files under `$CLAUDE_DIR`, it never touches `~/Library/LaunchAgents/` or calls `launchctl` |
 | `$METRICS_DIR/state/usage/status.json` | Poller's cache (shared across all sessions on the machine) |
 | `$METRICS_DIR/state/usage/session/<safe_session_id>.json` | Per-session WARN/CRIT fire-state |
 | `$METRICS_DIR/state/usage/checkpoints/<safe_session_id>.md` | Resume-brief checkpoint, written by the agent to re-arm CRIT |
@@ -229,13 +249,34 @@ stdin (the hook JSON payload) and pipes it, plus `METRICS_DIR`, into a
 
 ## Scheduling
 
-A launchd user-agent plist, installed alongside the other payload files,
-runs `usage_poll.py --poll` every `USAGE_BUDGET_POLL_SECS` (default 600s
-= 10 minutes) via `StartInterval`. Ten minutes was chosen as a balance:
-frequent enough that the cache is never more than one interval stale
-relative to the 30-minute staleness cutoff (three missed polls before the
-hook goes silent), infrequent enough to avoid hammering claude.ai or
-running a browser process too often in the background.
+A launchd user-agent plist runs `usage_poll.py --poll` every
+`USAGE_BUDGET_POLL_SECS` (default 600s = 10 minutes) via `StartInterval`.
+Ten minutes was chosen as a balance: frequent enough that the cache is
+never more than one interval stale relative to the 30-minute staleness
+cutoff (three missed polls before the hook goes silent), infrequent enough
+to avoid hammering claude.ai or running a browser process too often in the
+background.
+
+**Installation is a manual one-time step, not something `install.sh`
+handles.** `install.sh`'s MANIFEST `link-file` verb hard-codes every
+destination to `$CLAUDE_DIR/$rel` (confirmed by reading `install.sh`) — it
+has no code path that writes to `~/Library/LaunchAgents/` or calls
+`launchctl`. So `install.sh` links the plist *template* into the repo's
+usual tracked location like any other payload file, but actually loading
+it as a launchd job is a separate manual step, the same shape as the
+`usage_poll.py --login` one-time auth step:
+
+```bash
+cp ~/.claude/tools/com.hdc.claude-agent-loop.usage-poll.plist \
+   ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) \
+   ~/Library/LaunchAgents/com.hdc.claude-agent-loop.usage-poll.plist
+```
+
+This is documented in INSTALL.md as an explicit post-install step, and the
+implementation plan's final task must include running it and confirming
+the job is loaded (`launchctl list | grep usage-poll`) as part of its
+evidence.
 
 ## Thresholds and state
 
@@ -248,9 +289,11 @@ running a browser process too often in the background.
 - `USAGE_BUDGET_POLL_SECS` = 600 (poller-side, not hook-side; consumed by
   the launchd plist template, not by `usage-budget.sh`)
 - Metric = `max(session_pct, weekly_pct)` from the cache.
-- Per-session fire-state JSON shape (mirrors `context-budget.sh`):
+- Per-session fire-state JSON shape — the same 4 fields as
+  `context-budget.sh:87-88`, not 3 (an earlier draft of this spec omitted
+  `checkpoint_ack`; corrected after re-reading the real source):
   ```json
-  {"last_check_ts": 0.0, "warn_fired": false, "crit_since": null}
+  {"last_check_ts": 0.0, "warn_fired": false, "crit_since": null, "checkpoint_ack": false}
   ```
 
 ## Error handling
@@ -310,6 +353,11 @@ Environment variables (all optional, all with defaults above):
       `prose_grammar_gate.py` (number-aware a/an, no double spaces,
       subject-verb agreement) — a fixed-string assertion so future edits
       to the copy can't silently reintroduce a grammar defect.
+  14. Reset-on-drop: after WARN or CRIT has fired (with or without a
+      written checkpoint), a subsequent call where `pct` has dropped back
+      below `WARN_PCT` resets all four state fields; a later call that
+      climbs back into WARN or CRIT territory fires fresh, un-suppressed
+      WARN/CRIT messages rather than staying muted from the prior cycle.
 - **`payload/tools/tests/test_usage_poll.py`** — a unit test against a
   **mocked** Playwright page (a fixture HTML string resembling the real
   usage page's DOM/ARIA structure) verifying the percentage-extraction and
@@ -329,11 +377,19 @@ Environment variables (all optional, all with defaults above):
 - [ ] `payload/hooks/usage-budget.sh`
 - [ ] `payload/tools/tests/test_usage_budget.sh` (13 cases above)
 - [ ] `payload/tools/tests/test_usage_poll.py` (mocked-Playwright unit test)
-- [ ] `payload/launchd/com.hdc.claude-agent-loop.usage-poll.plist` (template)
+- [ ] `payload/launchd/com.hdc.claude-agent-loop.usage-poll.plist`
+      (template — `install.sh` links it into the tracked payload location
+      like any other file, but loading it as a launchd job is a separate
+      manual step; see Scheduling)
 - [ ] `payload/MANIFEST` — new `link-file hooks/usage-budget.sh` line
       (exact format confirmed at the existing `link-file
-      hooks/context-budget.sh` entry) plus an analogous entry for
-      `tools/usage_poll.py` and the launchd plist.
+      hooks/context-budget.sh` entry) plus an analogous `link-file` entry
+      for `tools/usage_poll.py` and for the plist template. MANIFEST only
+      places these files under `$CLAUDE_DIR`; it does not install or load
+      the launchd job — that is the manual step documented above.
+- [ ] INSTALL.md — new "Usage-budget poller (one-time)" subsection
+      documenting the `usage_poll.py --login` step and the
+      `launchctl bootstrap` step from Scheduling.
 - [ ] `payload/fragments/settings.fragment.json` — new `PostToolUse` array
       entry `{"hooks": [{"type": "command", "command":
       "$HOME/.claude/hooks/usage-budget.sh"}]}`, added alongside the
@@ -345,6 +401,21 @@ Environment variables (all optional, all with defaults above):
       (it lives outside the repo, under the user's home directory, so
       this is a documentation note in INSTALL.md rather than a repo
       `.gitignore` line — flagged here so the plan doesn't drop it).
+
+## Implementation phasing
+
+The two components carry different risk profiles: `usage_poll.py` +
+Playwright auth + the launchd install step are novel infrastructure this
+repo hasn't built before (external site, persisted browser session,
+DOM-shape drift, a manual OS-level install step), while `usage-budget.sh`
+is low-risk, mechanical work that mirrors an existing, proven file
+(`context-budget.sh`) almost line-for-line. Rather than splitting this into
+two specs, the implementation plan should sequence the poller first as its
+own task group (with the manual `--login` and `launchctl bootstrap`
+verification steps as its exit criteria) before the hook — so the hook's
+tests can run against a real `status.json` shape produced by a poller that
+has already been proven to work, not just an assumed shape. One spec, one
+plan, phased tasks.
 
 ## Open risks / trade-offs
 
