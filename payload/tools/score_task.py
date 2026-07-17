@@ -153,6 +153,8 @@ def _score(args):
         "note": note,
         "resources_deployed": _lookup_resources(args.metrics_dir, task_id),
     }
+    if args.task_shape:
+        record["task_shape"] = args.task_shape
     hm._append_record(args.metrics_dir, record)
     print("score_task: recorded score for task %r: %s"
           % (task_id,
@@ -240,6 +242,10 @@ def _build_parser():
                     metavar="name=level",
                     help="a self-score, e.g. outcome=good (repeatable)")
     ap.add_argument("--note", help="a free-text note; redacted before storage")
+    ap.add_argument("--task-shape", dest="task_shape",
+                    choices=["planning", "creation", "mechanical"],
+                    help="how the work was classified when routed (H5 "
+                         "route-cost evidence); omit when unclassified")
     ap.add_argument("--session-id", help="optional session id for the record")
     ap.add_argument("--project", help="optional project slug for the record")
     ap.add_argument("--metrics-dir",
