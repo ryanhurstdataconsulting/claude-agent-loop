@@ -228,8 +228,9 @@ def build_arg_parser():
 
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
-    cache_path, log_path = resolve_paths()
+    log_path = None
     try:
+        cache_path, log_path = resolve_paths()
         if args.login:
             path = login()
             print(f"Saved claude.ai session to {path}")
@@ -237,7 +238,8 @@ def main(argv=None):
             poll(cache_path, log_path)
     except Exception as e:  # fail-open: a failed run must never break launchd.
         try:
-            log_line(log_path, f"unexpected top-level error, exiting 0 ({e!r})")
+            if log_path is not None:
+                log_line(log_path, f"unexpected top-level error, exiting 0 ({e!r})")
         except Exception:
             pass
     return 0

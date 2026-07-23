@@ -1,4 +1,4 @@
-import json, os, pathlib, sys, tempfile, unittest
+import contextlib, io, json, os, pathlib, sys, tempfile, unittest
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -278,12 +278,27 @@ class TestCli(unittest.TestCase):
         up.login = lambda *a, **k: (called.setdefault("login", True),
                                     pathlib.Path("/x"))[1]
         try:
-            rc = up.main(["--login"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = up.main(["--login"])
         finally:
             up.poll, up.login = orig_poll, orig_login
         self.assertEqual(rc, 0)
         self.assertTrue(called.get("login"))
         self.assertNotIn("poll", called)
+
+
+class TestMainFailOpen(unittest.TestCase):
+    def test_main_returns_zero_when_resolve_paths_raises(self):
+        real = up.resolve_paths
+
+        def boom():
+            raise RuntimeError("home directory unresolvable")
+
+        up.resolve_paths = boom
+        try:
+            self.assertEqual(up.main([]), 0)
+        finally:
+            up.resolve_paths = real
 
 
 class TestSchemaLock(unittest.TestCase):
@@ -315,14 +330,17 @@ class TestSchemaLock(unittest.TestCase):
 class TestLogDiagnosticHygiene(unittest.TestCase):
     def test_log_messages_have_no_double_spaces(self):
         with tempfile.TemporaryDirectory() as d:
+            cache_path = pathlib.Path(d) / "state" / "usage" / "status.json"
             log_path = pathlib.Path(d) / "logs" / "usage_poll.log"
-            up.log_line(
-                log_path,
+            up.poll(cache_path, log_path, storage_state_path="/unused",
+                    fetch=lambda ssp: ("https://claude.ai/login?return-to=%2F", ""))
+            content = log_path.read_text()
+            self.assertIn(
                 "poll aborted: claude.ai redirected to login; session expired, "
-                "cache left untouched — re-run 'usage_poll.py --login'")
-            # strip the leading "YYYY-...Z " timestamp, then check the message body
-            msg = log_path.read_text().split(" ", 1)[1]
-            self.assertNotIn("  ", msg)
+                "cache left untouched — re-run 'usage_poll.py --login'",
+                content)
+            self.assertNotIn("  ", content)
+            self.assertFalse(cache_path.exists())
 
 
 if __name__ == "__main__":
