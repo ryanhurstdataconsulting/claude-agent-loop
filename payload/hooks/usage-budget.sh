@@ -167,9 +167,80 @@ try:
             reset_at = "unknown"
         return (int(pct), reset_at)
 
-    pct, reset_at = read_status()
+    def emit(tier, pct, reset_at):
+        if tier == "warn":
+            msg = ("Usage budget: account usage at %d%% of the weekly/session "
+                   "limit. Steering toward a pause point." % pct)
+            ctx = ("Usage-budget warning: this account's usage is at %d%% of "
+                   "its weekly/session limit. Consider steering toward a safe "
+                   "pause point in the next hour." % pct)
+        else:
+            msg = ("Usage budget CRITICAL: account usage at %d%%. Checkpoint "
+                   "required." % pct)
+            ctx = ("Usage-budget CRITICAL: usage is at %d%%, close to the "
+                   "account limit (resets %s). Stop new work, commit and push "
+                   "what's in progress, and write a checkpoint file at %s — "
+                   "this message will repeat until you do."
+                   % (pct, reset_at, ckpt_path))
+        out = {
+            "systemMessage": msg,
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": ctx,
+            },
+        }
+        sys.stdout.write(json.dumps(out))
 
-    # (threshold state machine added in Task 7)
+    pct, reset_at = read_status()
+    now = time.time()
+
+    # Critical tier active and unacknowledged: verify the checkpoint, re-arm,
+    # or repeat the directive. No throttle at this tier.
+    if state["crit_since"] is not None and not state["checkpoint_ack"]:
+        try:
+            ck_mtime = os.path.getmtime(ckpt_path)
+        except Exception:
+            ck_mtime = None
+        if ck_mtime is not None and ck_mtime >= int(state["crit_since"]):
+            state["checkpoint_ack"] = True
+            save_state()
+            bail()
+        if pct is None:
+            bail()  # fail-open: unknown/stale usage, no nag this call
+        if pct < warn_pct:
+            reset_state()  # usage dropped back: re-arm both tiers
+            save_state()
+            bail()
+        emit("crit", pct, reset_at)
+        bail()
+
+    # Normal path: throttled measurement.
+    if now - state["last_check_ts"] < check_secs:
+        bail()
+    state["last_check_ts"] = now
+    if pct is None:
+        save_state()
+        bail()
+    if pct >= crit_pct:
+        if state["crit_since"] is None:
+            state["crit_since"] = now
+            save_state()
+            emit("crit", pct, reset_at)
+        else:
+            # crit_since set with checkpoint_ack true: the acknowledgment
+            # holds until usage drops below the warn threshold.
+            save_state()
+        bail()
+    if pct >= warn_pct:
+        if not state["warn_fired"]:
+            state["warn_fired"] = True
+            save_state()
+            emit("warn", pct, reset_at)
+        else:
+            save_state()
+        bail()
+    if state["warn_fired"] or state["crit_since"] is not None or state["checkpoint_ack"]:
+        reset_state()
     save_state()
     bail()
 except Exception:
