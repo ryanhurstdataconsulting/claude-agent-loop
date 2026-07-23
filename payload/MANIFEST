@@ -235,8 +235,12 @@ link-file tools/score_task.py
 link-file tools/secret_pii_scrub_gate.py
 link-file tools/ssh_tunnel_keepalive.sh
 link-file tools/themes_pending.py
+link-file tools/usage_poll.py
 link-dir tools/templates
 link-dir tools/tests
+
+# --- launchd/ ---------------------------------------------------------------
+link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
 
 # --- registry/guides/ (30 guides + template) --------------------------------
 link-file registry/guides/_TEMPLATE.md

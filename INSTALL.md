@@ -207,6 +207,49 @@ Postgres/MySQL MCP:
 
 ---
 
+## Usage-budget poller (one-time)
+
+The usage-budget poller (`tools/usage_poll.py`) needs two manual, one-time steps
+that `install.sh` deliberately does not perform — it authenticates a real browser
+session and loads a user-level launchd job, neither of which the MANIFEST symlink
+mechanism touches.
+
+1. **Authenticate once.** Run the poller in login mode; a browser window opens.
+   Log in to claude.ai, open the usage page, then return to the terminal and press
+   Enter:
+
+   ```bash
+   python3 ~/.claude/tools/usage_poll.py --login
+   ```
+
+   This writes `~/.claude-agent-loop/usage-session.json` — a persisted Playwright
+   session (cookies + localStorage). Treat it exactly like `secrets.env`: it lives
+   outside the repo, under your home directory, and must never be committed,
+   printed, or logged in full. There is no repo `.gitignore` line for it because it
+   is not inside the repo; this note is its safeguard.
+
+2. **Load the launchd job.** Copy the plist template into `~/Library/LaunchAgents/`
+   and bootstrap it so macOS runs `usage_poll.py --poll` every 10 minutes:
+
+   ```bash
+   cp ~/.claude/launchd/com.hdc.claude-agent-loop.usage-poll.plist \
+      ~/Library/LaunchAgents/
+   launchctl bootstrap gui/$(id -u) \
+      ~/Library/LaunchAgents/com.hdc.claude-agent-loop.usage-poll.plist
+   ```
+
+   Confirm it is loaded:
+
+   ```bash
+   launchctl list | grep usage-poll
+   ```
+
+If claude.ai's session later expires, the poller logs a login-redirect line to
+`~/.claude/metrics/logs/usage_poll.log` and leaves the cache untouched; re-run
+step 1 to re-authenticate.
+
+---
+
 ## How to undo
 
 1. Restore your backed-up config:

@@ -36,6 +36,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `out` tokens; only Opus is a hit, and the session tier never is), joined to
   the score's `task_shape`. H5 is now the eighth evaluable rule, which also
   makes rulebooks with an ACTIVE H5 lint-clean.
+- **Usage-budget poller** (`payload/tools/usage_poll.py`, launchd job
+  `com.hdc.claude-agent-loop.usage-poll`) — an out-of-band poller that reads the
+  account's session- and weekly-limit percentages from claude.ai's usage page
+  through a persisted Playwright session and atomically writes
+  `~/.claude/metrics/state/usage/status.json` every 10 minutes, so the
+  usage-budget hook can warn before a subscription limit is exhausted. Fail-open:
+  any poll failure is logged to `usage_poll.log` and leaves the existing cache
+  untouched, and the process always exits 0. Auth is a one-time
+  `usage_poll.py --login`; loading the launchd job is a manual `launchctl
+  bootstrap` step (see INSTALL.md). Covered by the 28-case
+  `payload/tools/tests/test_usage_poll.py`.
 
 ### Changed
 - Seed `learning/HEURISTICS.md`: H5 moved from the "Planned (not yet

@@ -343,5 +343,34 @@ class TestLogDiagnosticHygiene(unittest.TestCase):
             self.assertFalse(cache_path.exists())
 
 
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]  # tests->tools->payload->root
+
+
+class TestLaunchdAndManifest(unittest.TestCase):
+    PLIST = REPO_ROOT / "payload" / "launchd" / "com.hdc.claude-agent-loop.usage-poll.plist"
+    MANIFEST = REPO_ROOT / "payload" / "MANIFEST"
+
+    def test_plist_exists_and_lints(self):
+        self.assertTrue(self.PLIST.exists(), f"missing {self.PLIST}")
+        import shutil, subprocess
+        if shutil.which("plutil"):  # macOS only; skip the lint on Linux CI
+            r = subprocess.run(["plutil", "-lint", str(self.PLIST)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_plist_label_interval_and_poll_mode(self):
+        body = self.PLIST.read_text()
+        self.assertIn("<string>com.hdc.claude-agent-loop.usage-poll</string>", body)
+        self.assertIn("<integer>600</integer>", body)   # USAGE_BUDGET_POLL_SECS
+        self.assertIn("--poll", body)
+        self.assertIn("usage_poll.py", body)
+
+    def test_manifest_links_tool_and_plist(self):
+        lines = self.MANIFEST.read_text().splitlines()
+        self.assertIn("link-file tools/usage_poll.py", lines)
+        self.assertIn(
+            "link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist", lines)
+
+
 if __name__ == "__main__":
     unittest.main()
