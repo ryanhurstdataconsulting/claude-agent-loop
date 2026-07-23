@@ -191,6 +191,7 @@ decision; `AGENT_LOOP_CONTRIBUTE=0` turns the whole thing off.
 | `precompact-event.sh` | PreCompact | Records each compaction; on the second in one session, offers the opt-in TOKEN MINIMIZER EXTREME context-discipline rule set (never enables it without approval). |
 | `harvest-metrics.sh` | SubagentStop + SessionEnd | Harvests objective metrics per task — tokens by model, cache efficiency, tool errors, tests passed/failed, duration — into the local metrics store. |
 | `context-budget.sh` | PostToolUse | Watches context-window occupancy from the session transcript; warns at 70% of the 150k budget and, from 85%, repeats a pause-point directive on every tool call until a resume-brief checkpoint file exists. |
+| `usage-budget.sh` | PostToolUse | Reads the out-of-band usage poller's cached account status and steers the agent to a pause point before a Claude session or weekly subscription limit is exhausted; warns at 70% of the higher of the two ceilings and, from 85%, repeats a checkpoint directive on every tool call until a checkpoint file exists. Stays silent when the cache is missing or stale. |
 
 ### Role agents (the AGENT layer)
 

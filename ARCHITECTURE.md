@@ -167,6 +167,14 @@ The registry is inert until a session runs the loop over it:
   durable pause point — one warning at 70% of the token budget, then a repeating
   checkpoint directive from 85% until a resume brief exists on disk. It acts
   *before* compaction; `precompact-event.sh` records and escalates *after* it.
+- **`payload/hooks/usage-budget.sh`** (PostToolUse) reads a small JSON cache
+  that an out-of-band launchd poller (`usage_poll.py`) refreshes every ~10
+  minutes with the account's session-limit and weekly-limit percentages, and
+  steers the agent to a durable pause point before either Claude subscription
+  ceiling is exhausted — one warning at 70% of the higher percentage, then a
+  repeating checkpoint directive from 85% until a checkpoint file exists on
+  disk. It reads only the cache (never the network), and it stays silent
+  whenever that cache is missing or stale. Kill switch: `USAGE_BUDGET_DISABLE=1`.
 
 ### 3. Doc-cascade layer — the instruction precedence
 

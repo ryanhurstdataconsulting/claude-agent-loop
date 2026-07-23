@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Usage-budget hook** (`payload/hooks/usage-budget.sh`, PostToolUse) —
+  reads the cached account-usage status that the out-of-band `usage_poll.py`
+  launchd poller writes to `~/.claude/metrics/state/usage/status.json`, and
+  steers the agent to a durable pause point before a Claude session or weekly
+  subscription limit is exhausted: a single warning at 70% of
+  `max(session_pct, weekly_pct)`, then a checkpoint directive from 85% that
+  repeats on every tool call until a checkpoint file exists at
+  `~/.claude/metrics/state/usage/checkpoints/<session>.md`. Reads only the
+  local cache (no network in the hot path) and stays silent when the cache is
+  missing or older than 30 minutes. Fail-open, always exits 0; kill switch
+  `USAGE_BUDGET_DISABLE=1`. Covered by the 17-case
+  `payload/tools/tests/test_usage_budget.sh`, including a fixed-string grammar
+  regression on the emitted directive prose.
 - **`grill-me` skill** — an adversarial plan-stress-testing interview (one
   tough question at a time, each with a recommended answer, no action until
   shared understanding). Vendored from Matt Pocock's `mattpocock/skills`
