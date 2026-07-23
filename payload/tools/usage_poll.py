@@ -4,7 +4,8 @@ weekly-limit percentages and cache them for the usage-budget hook.
 
 Two modes:
   --login: open a visible browser once so you can authenticate to claude.ai,
-    then persist the Playwright storageState to a gitignored path.
+    then persist the Playwright storageState to an out-of-repo path under
+    the user's home directory, treated like secrets.env.
   --poll (default): headless — reuse the persisted storageState, read the
     two usage percentages plus their reset timestamps, and atomically write
     $METRICS_DIR/state/usage/status.json.
