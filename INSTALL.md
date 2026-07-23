@@ -210,9 +210,9 @@ Postgres/MySQL MCP:
 ## Usage-budget poller (one-time)
 
 The usage-budget poller (`tools/usage_poll.py`) needs two manual, one-time steps
-that `install.sh` deliberately does not perform — it authenticates a real browser
-session and loads a user-level launchd job, neither of which the MANIFEST symlink
-mechanism touches.
+that `install.sh` deliberately does not perform: authenticating a real browser
+session and loading a user-level launchd job, neither of which the MANIFEST
+symlink mechanism touches.
 
 1. **Authenticate once.** Run the poller in login mode; a browser window opens.
    Log in to claude.ai, open the usage page, then return to the terminal and press

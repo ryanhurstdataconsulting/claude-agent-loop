@@ -25,8 +25,9 @@ from datetime import datetime, timezone
 # The current claude.ai usage page. If claude.ai moves this page, update here.
 USAGE_URL = "https://claude.ai/settings/usage"
 
-# Persisted Playwright storageState (cookies + localStorage). Gitignored,
-# treated exactly like secrets.env: never committed, never printed in full.
+# Persisted Playwright storageState (cookies + localStorage). Lives out-of-repo,
+# under the user's home directory — treated exactly like secrets.env: never
+# committed, never printed in full.
 STORAGE_STATE_PATH = pathlib.Path.home() / ".claude-agent-loop" / "usage-session.json"
 
 
@@ -54,7 +55,8 @@ def log_line(log_path, msg):
 
 def login(storage_state_path=STORAGE_STATE_PATH, launcher=None, prompt=input):
     """Open a visible browser for a one-time manual claude.ai login, then persist
-    the Playwright storageState to `storage_state_path` (parent dir forced 0700).
+    the Playwright storageState to `storage_state_path` (parent dir forced 0700,
+    file forced 0600).
 
     `launcher` and `prompt` are injectable for testing; in production `launcher`
     defaults to the real Playwright Chromium driver below.
@@ -64,6 +66,7 @@ def login(storage_state_path=STORAGE_STATE_PATH, launcher=None, prompt=input):
     os.chmod(storage_state_path.parent, 0o700)  # mkdir mode is umask-masked; force it.
     launcher = launcher or _playwright_login_launcher
     launcher(USAGE_URL, str(storage_state_path), prompt)
+    os.chmod(storage_state_path, 0o600)
     return storage_state_path
 
 
