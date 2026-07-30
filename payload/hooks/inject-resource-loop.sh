@@ -1,38 +1,35 @@
 #!/bin/bash
-# SessionStart hook — injects the Resource Loop directive + registry index.
-# ADDITIVE-ONLY: always exits 0; a broken registry degrades to directive-only.
-REGISTRY="$HOME/.claude/registry/REGISTRY.md"
-cat <<'EOF'
-<resource-loop>
-Run the Resource Loop before your first task (skill: resource-loop):
-MATCH the task against the index below — role hop first: run
-python3 ~/.claude/tools/route_role.py "<task>" and, on a confident match,
-print its "Role —" line and use that role's skills as your shortlist;
-ANNOUNCE one line starting "Resource Loop — deploying:" (or "Resource Loop —
-no registry match; proceeding bare."); ROUTE subagents (planning = session
-model, creation = opus, mechanical = sonnet/haiku); EXECUTE; SCORE the
-result; LEARN (evaluate heuristics → improve-now / theme-note / no-action).
-File GAPs (recurring unmet needs) as candidate stubs in
-~/.claude/registry/candidates/. Keyword shortcuts for MATCH are in
-~/.claude/registry/TRIGGERS.md. Carry this directive into every subagent
-brief. First run on this machine? Run the environment-bootstrap skill to
-tailor this config to your stack.
-EOF
-if [ -r "$REGISTRY" ]; then
-  echo "--- REGISTRY INDEX ($(grep -c '^|' "$REGISTRY") rows) ---"
-  cat "$REGISTRY"
-else
-  echo "--- REGISTRY INDEX unavailable; read ~/.claude/registry/guides/ on demand ---"
-fi
+# SessionStart hook — emit PENDING WORK ONLY.
+#
+# This hook used to inject the full Resource Loop directive plus the entire
+# REGISTRY.md index (~7,700 chars, ~1,900 tokens) into every single session.
+# Both are static text. The hooks reference is explicit about that case:
+#
+#   "For static context that doesn't require a script, use CLAUDE.md instead."
+#
+# So the directive now lives in ~/.claude/CLAUDE.md section 3, where it is part
+# of the cached prompt prefix and costs nothing per session, and the registry is
+# PULLED on demand (the harness already surfaces skills by description; the
+# index is only worth reading when a task looks unfamiliar).
+#
+# What is left here is the only genuinely dynamic part: state that changed since
+# last session and that the agent cannot know without running something. When
+# there is no pending work this hook emits NOTHING AT ALL — silence is the
+# correct output, not a per-session reminder that the loop exists.
+#
+# ADDITIVE-ONLY: always exits 0. A missing python3 or a broken counter tool
+# degrades to silence and never fails the session start.
+set -u
 
-# --- Nudge budget: at most 3 injected lines inside these tags (3 of 3 used). --
-# Line 1 of 3: the loop-themes nudge (P4). When 10 or more theme rows are still
-# unprocessed, point the session at the theme-assessment skill. Additive-only:
-# if python3 or the counter tool is missing, or the count is not a plain
-# integer, we inject nothing and never fail the session start.
-# Line 2 of 3: the digest nudge (P5), added below after the themes block.
-# Line 3 of 3: the contribute nudge (feedback loop) — gate-cleared local
-# resources ready to auto-push upstream. Same degrade discipline as the others.
+NUDGES=""
+
+add_nudge() {
+  # $1 = a single line, already validated non-empty by the caller.
+  if [ -z "$NUDGES" ]; then NUDGES="$1"; else NUDGES="$NUDGES
+$1"; fi
+}
+
+# --- 1. unprocessed loop themes ----------------------------------------------
 THEME_NUDGE_AT=10
 THEMES_TOOL="$HOME/.claude/tools/themes_pending.py"
 THEMES_FILE="$HOME/.claude/learning/LOOP_THEMES.md"
@@ -42,36 +39,33 @@ if command -v python3 >/dev/null 2>&1 && [ -r "$THEMES_TOOL" ]; then
     '' | *[!0-9]*) : ;;                     # empty or non-numeric — no nudge
     *)
       if [ "$pending" -ge "$THEME_NUDGE_AT" ]; then
-        echo "Loop themes: $pending unprocessed — run Skill(theme-assessment)."
+        add_nudge "Loop themes: $pending unprocessed — run Skill(theme-assessment)."
       fi
       ;;
   esac
 fi
 
-# Line 2 of 2: the digest nudge (P5). loop_digest.py --nudge prints one line
-# when a digest is due (10+ undigested AUTO_COMMITS.log entries, or a stale/
-# absent .last-digest with at least one undigested entry) and nothing otherwise.
-# Same degrade discipline: a missing python3 or tool injects nothing, exit 0.
+# --- 2. digest due ------------------------------------------------------------
 DIGEST_TOOL="$HOME/.claude/tools/loop_digest.py"
 if command -v python3 >/dev/null 2>&1 && [ -r "$DIGEST_TOOL" ]; then
   digest_line="$(python3 "$DIGEST_TOOL" --nudge 2>/dev/null)"
-  case "$digest_line" in
-    '') : ;;                                # nothing due — no nudge
-    *) printf '%s\n' "$digest_line" ;;
-  esac
+  [ -n "$digest_line" ] && add_nudge "$digest_line"
 fi
 
-# Line 3 of 3: the contribute nudge (feedback loop). loop_contribute.py --nudge
-# prints one line when gate-cleared local resources are ready to auto-push to a
-# contrib/* branch, and nothing otherwise. It NEVER pushes from this hook.
+# --- 3. gate-cleared resources ready to contribute upstream -------------------
 CONTRIB_TOOL="$HOME/.claude/tools/loop_contribute.py"
 if command -v python3 >/dev/null 2>&1 && [ -r "$CONTRIB_TOOL" ]; then
   contrib_line="$(python3 "$CONTRIB_TOOL" --nudge 2>/dev/null)"
-  case "$contrib_line" in
-    '') : ;;                                # nothing pending — no nudge
-    *) printf '%s\n' "$contrib_line" ;;
-  esac
+  [ -n "$contrib_line" ] && add_nudge "$contrib_line"
 fi
 
-echo "</resource-loop>"
+# --- emit only if there is something to say -----------------------------------
+if [ -n "$NUDGES" ]; then
+  echo "<resource-loop>"
+  printf '%s\n' "$NUDGES"
+  echo "(Loop protocol: ~/.claude/CLAUDE.md section 3. Registry index:"
+  echo "~/.claude/registry/REGISTRY.md — read it only if the task looks unfamiliar.)"
+  echo "</resource-loop>"
+fi
+
 exit 0
