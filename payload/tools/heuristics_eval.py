@@ -247,11 +247,17 @@ def _coarse_count(records):
                if r.get("resources_source") == "session-backfill")
 
 
+#: Sources whose resources_deployed is trustworthy per task. ``task`` is the
+#: transcript's own announce line; ``workorder`` is written by plan_task.py at
+#: assignment time and is if anything stronger, since a tool wrote it rather
+#: than a regex recovering it from prose. ``session-backfill`` is neither.
+PRECISE_SOURCES = ("task", "workorder")
+
+
 def _precise_count(records):
-    """Rows whose resources_deployed was announced by the task itself
-    (``resources_source == "task"``) — the only PRECISE per-task attribution.
+    """Rows with PRECISE per-task attribution (see PRECISE_SOURCES).
     A ``session-backfill`` or an absent source is not precise."""
-    return sum(1 for r in records if r.get("resources_source") == "task")
+    return sum(1 for r in records if r.get("resources_source") in PRECISE_SOURCES)
 
 
 def _apply_downgrade(firing):

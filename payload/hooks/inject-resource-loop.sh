@@ -59,6 +59,48 @@ if command -v python3 >/dev/null 2>&1 && [ -r "$CONTRIB_TOOL" ]; then
   [ -n "$contrib_line" ] && add_nudge "$contrib_line"
 fi
 
+# --- 4. work orders closed unattended since last session ----------------------
+# loop-close.sh (SessionEnd) links, assesses, and emits precise evidence with
+# nobody watching, then leaves its result here. It deliberately does NOT act on
+# a firing — patching a resource is a decision that wants a human present. This
+# is where that human first appears, and it is one line, not homework.
+CLOSE_DIR="$HOME/.claude/metrics/state/loop-close"
+if command -v python3 >/dev/null 2>&1 && [ -d "$CLOSE_DIR" ]; then
+  close_line="$(python3 - "$CLOSE_DIR" <<'PY' 2>/dev/null
+import glob, json, os, sys
+parts = firings = 0
+plans = []
+stale = []
+for f in glob.glob(os.path.join(sys.argv[1], "*.json")):
+    try:
+        d = json.load(open(f))
+    except Exception:
+        continue
+    for c in d.get("closed") or []:
+        parts += c.get("parts") or 0
+        if c.get("plan_id"):
+            plans.append(c["plan_id"])
+    fr = d.get("firings")
+    if isinstance(fr, list):
+        firings += len(fr)
+    stale.append(f)
+if plans:
+    msg = "Loop closed %d work order(s), %d part(s) assessed" % (len(plans), parts)
+    if firings:
+        msg += "; %d heuristic(s) fired — run Skill(resource-loop) LEARN to act" % firings
+    else:
+        msg += "; no heuristic fired"
+    print(msg + ".")
+    for f in stale:
+        try:
+            os.remove(f)
+        except Exception:
+            pass
+PY
+)"
+  [ -n "$close_line" ] && add_nudge "$close_line"
+fi
+
 # --- emit only if there is something to say -----------------------------------
 if [ -n "$NUDGES" ]; then
   echo "<resource-loop>"
