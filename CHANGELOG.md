@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Work-order gate** (`payload/hooks/workorder-gate.sh`, UserPromptSubmit) —
+  the mechanical half of the work-order pipeline. Scores every prompt through
+  `plan_task.py --classify` and injects the decomposition directive when it
+  trips the creativity threshold; stays silent on conversational prompts, slash
+  commands, and every failure path. Re-arms after
+  `WORKORDER_GATE_REARM_MINUTES` (default 60) per session, so a long creative
+  session is prompted once rather than every turn. Fail-open, always exits 0;
+  kill switch `WORKORDER_GATE_DISABLE=1`. The directive tells the agent it may
+  overrule a misjudged score in one sentence — the classifier is keyword
+  arithmetic, not judgment. Covered by the 16-assertion
+  `payload/tools/tests/test_workorder_gate.sh`. Also adds
+  `plan_task.py --classify`, a read-only surface that writes no state.
 - **Work-order pipeline** (`payload/tools/plan_task.py`,
   `payload/tools/make_brief.py`, `payload/tools/assess_task.py`) — replaces
   prose-scraped attribution with one JSON artifact per task at

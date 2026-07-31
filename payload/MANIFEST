@@ -208,6 +208,7 @@ link-file hooks/auto-update.sh
 link-file hooks/context-budget.sh
 link-file hooks/usage-budget.sh
 link-file hooks/read-guard.sh
+link-file hooks/workorder-gate.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/assess_task.py

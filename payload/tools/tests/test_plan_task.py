@@ -332,6 +332,28 @@ class TestCli(TempCase):
         r = self._run("--from-plan", str(doc), "--task", "t")
         self.assertNotEqual(r.returncode, 0)
 
+    def test_classify_reports_a_creative_prompt(self):
+        r = self._run("--classify", "build a new coach dashboard")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        d = json.loads(r.stdout)
+        self.assertTrue(d["creative"])
+        self.assertGreaterEqual(d["score"], d["threshold"])
+
+    def test_classify_reports_a_conversational_prompt(self):
+        d = json.loads(self._run("--classify", "what did that error mean").stdout)
+        self.assertFalse(d["creative"])
+
+    def test_classify_writes_no_state(self):
+        # The gate hook calls this on every prompt; it must not create files.
+        before = sorted(p.name for p in pathlib.Path(self.tmp).rglob("*"))
+        self._run("--classify", "build a new coach dashboard")
+        self.assertEqual(before, sorted(p.name for p in pathlib.Path(self.tmp).rglob("*")))
+
+    def test_classify_handles_empty_text(self):
+        r = self._run("--classify", "")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(json.loads(r.stdout)["creative"])
+
     def test_show_renders_the_work_order(self):
         r = self._run("--new", "count the rows in the export")
         pid = r.stdout.strip().splitlines()[0].split()[-1]

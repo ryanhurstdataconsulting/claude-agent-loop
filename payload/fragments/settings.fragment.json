@@ -74,6 +74,14 @@
             "command": "$HOME/.claude/hooks/auto-update.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/workorder-gate.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [

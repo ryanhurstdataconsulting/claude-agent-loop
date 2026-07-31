@@ -278,6 +278,8 @@ def _build_parser():
     m.add_argument("--assign", metavar="PLAN_ID", help="route every open part")
     m.add_argument("--log", metavar="PLAN_ID", help="record a part's structured return")
     m.add_argument("--show", metavar="PLAN_ID", help="print a work order")
+    m.add_argument("--classify", metavar="TEXT",
+                   help="score text on the creativity gate; print JSON and exit 0")
     p.add_argument("--task", help="the task text (required with --from-plan)")
     p.add_argument("--part", help="part id (required with --log)")
     p.add_argument("--json", dest="json_file", help="file holding the part's return object")
@@ -290,6 +292,16 @@ def _build_parser():
 def main(argv=None):
     a = _build_parser().parse_args(argv)
     state, roles_dir = a.state_dir, a.roles_dir
+
+    # --classify is the read-only surface the UserPromptSubmit gate calls on
+    # every prompt. It touches no state and always exits 0.
+    if a.classify is not None:
+        score = creative_score(a.classify)
+        print(json.dumps({"score": score, "creative": score >= MIN_CREATIVE,
+                          "threshold": MIN_CREATIVE,
+                          "model": model_for(a.classify)}, sort_keys=True))
+        return 0
+
     branch = _git(["rev-parse", "--abbrev-ref", "HEAD"])
     project = re.sub(r"[^A-Za-z0-9]+", "-", os.getcwd())
 

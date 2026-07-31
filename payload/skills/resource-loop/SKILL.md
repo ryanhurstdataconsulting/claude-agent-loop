@@ -30,6 +30,14 @@ ASSESS     assess_task.py <plan-id> [--repo .] [--propose-row]
 LEARN      heuristics_eval.py, now reading objective evidence
 ```
 
+**You do not have to remember this.** `workorder-gate.sh` runs on
+`UserPromptSubmit` and scores every prompt. A conversational prompt or a slash
+command passes in silence; a prompt at or above the creativity threshold injects
+the decomposition directive before you answer, at most once per hour per session
+so a long build is not nagged every turn. The gate is keyword arithmetic and can
+misjudge — when it does, say so in one sentence and carry on. Kill switch:
+`WORKORDER_GATE_DISABLE=1`.
+
 **The superpowers gate.** `--new` REFUSES a creative task with exit 3. That is
 deliberate: a task worth building is worth designing first. Run
 `Skill(superpowers:brainstorming)` to settle the design, then
