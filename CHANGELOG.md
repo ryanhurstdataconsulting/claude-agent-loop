@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Work-order pipeline** (`payload/tools/plan_task.py`,
+  `payload/tools/make_brief.py`, `payload/tools/assess_task.py`) — replaces
+  prose-scraped attribution with one JSON artifact per task at
+  `~/.claude/metrics/state/workorders/<plan-id>.json` that every loop stage
+  reads and writes. Adds the DECOMPOSE stage the loop never had: `route_role`
+  now runs per PART rather than once per whole task. `plan_task.py --new`
+  refuses a task scoring creative (exit 3) until `superpowers:brainstorming`
+  and `superpowers:writing-plans` have run, whose plan document feeds
+  `--from-plan`; `--force` overrides but records `"forced": true`.
+  `make_brief.py` renders a dispatch prompt carrying the part's ids, skill
+  shortlist, and a required JSON return schema, so an agent cannot return a
+  valid result without producing its own attribution. `assess_task.py` derives
+  a `clean`/`dirty`/`unknown` verdict from tests, tool errors, commits, and
+  reverts with no model involvement — a part with no objective signal assesses
+  `unknown`, never `clean` — and `--propose-row` prints a project
+  `SUBAGENTS.md` row without writing inside a client project. Motivated by two
+  months of `~/.claude/metrics/`: the ANNOUNCE line parsed on 21.7% of subagent
+  tasks and subjective scores existed on 4.6%, while a git branch was recorded
+  on 100% and test results on 64% and neither was read. Covered by 84 cases
+  across `test_plan_task.py`, `test_make_brief.py`, and `test_assess_task.py`.
 - **Usage-budget hook** (`payload/hooks/usage-budget.sh`, PostToolUse) —
   reads the cached account-usage status that the out-of-band `usage_poll.py`
   launchd poller writes to `~/.claude/metrics/state/usage/status.json`, and

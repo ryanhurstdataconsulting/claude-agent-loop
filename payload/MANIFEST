@@ -210,6 +210,7 @@ link-file hooks/usage-budget.sh
 link-file hooks/read-guard.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
+link-file tools/assess_task.py
 link-file tools/build_watch.sh
 link-file tools/check_coverage.sh
 link-file tools/classify_visibility.py
@@ -223,6 +224,8 @@ link-file tools/lint_heuristics.py
 link-file tools/lint_registry.py
 link-file tools/lint_roles.py
 link-file tools/lint_scales.py
+link-file tools/make_brief.py
+link-file tools/plan_task.py
 link-file tools/loop_autocommit.sh
 link-file tools/loop_contribute.py
 link-file tools/loop_digest.py

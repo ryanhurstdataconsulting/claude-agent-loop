@@ -10,6 +10,48 @@ registry index is injected at session start inside `<resource-loop>` tags. If it
 is absent (hook failure, subagent context), read
 `~/.claude/registry/REGISTRY.md` directly.
 
+## The work-order pipeline — use this for any task with parts
+
+A task big enough to have parts runs on a **work order**: one JSON file at
+`~/.claude/metrics/state/workorders/<plan-id>.json` that every stage reads and
+writes. It exists because the ANNOUNCE line below is prose a harvester has to
+scrape back out of a transcript, and measured over two months that scrape
+succeeded on 21.7% of subagent tasks. A work order is written by a tool, so
+attribution is precise by construction.
+
+```
+DECOMPOSE  plan_task.py --new "<task>"                     one part
+           plan_task.py --from-plan <doc> --task "<task>"  one part per plan task
+ASSIGN     plan_task.py --assign <plan-id>                 route_role per PART
+BRIEF      make_brief.py <plan-id> <part-id>               the dispatch prompt
+EXECUTE    dispatch; agent returns JSON, not prose
+LOG        plan_task.py --log <plan-id> --part <id> --json <file>
+ASSESS     assess_task.py <plan-id> [--repo .] [--propose-row]
+LEARN      heuristics_eval.py, now reading objective evidence
+```
+
+**The superpowers gate.** `--new` REFUSES a creative task with exit 3. That is
+deliberate: a task worth building is worth designing first. Run
+`Skill(superpowers:brainstorming)` to settle the design, then
+`Skill(superpowers:writing-plans)` to produce the breakdown, then feed that plan
+document to `--from-plan`. `--force` overrides the refusal but records
+`"forced": true` on the work order, so the shortcut shows up in the data.
+
+**What ASSESS decides, and what it does not.** The verdict is `clean`, `dirty`,
+or `unknown`, computed from tests, tool errors, commits, and reverts — never
+from anyone's opinion of the work. A part with no objective signal assesses
+`unknown`, never `clean`; silence is not success. `score_task.py` is retained
+but demoted to a tiebreaker.
+
+**Where an improvement lands.** A machine-global lesson patches the skill or
+role doc through `loop_autocommit.sh`, exactly as before. A project-specific
+lesson belongs in that project's `.claude/SUBAGENTS.md` instead —
+`assess_task.py --propose-row` prints the row, and you ASK before writing it.
+That path never writes inside a client project on its own.
+
+Skip the work order for a trivial single-step task: measuring a one-line fix
+costs more than the measurement is worth.
+
 ## The six steps
 
 1. **MATCH** — semantically match the task against the index. Think in task
