@@ -38,6 +38,12 @@ so a long build is not nagged every turn. The gate is keyword arithmetic and can
 misjudge — when it does, say so in one sentence and carry on. Kill switch:
 `WORKORDER_GATE_DISABLE=1`.
 
+`pipeline-relay.sh` then keeps the chain moving: launching
+`superpowers:brainstorming` or `superpowers:writing-plans` injects the next
+link. It exists because a spec is where the chain kept dying — a session would
+settle the design, write a spec, and start implementing from it. **A spec is a
+design, not a decomposition.** Kill switch: `PIPELINE_RELAY_DISABLE=1`.
+
 **The superpowers gate.** `--new` REFUSES a creative task with exit 3. That is
 deliberate: a task worth building is worth designing first. Run
 `Skill(superpowers:brainstorming)` to settle the design, then

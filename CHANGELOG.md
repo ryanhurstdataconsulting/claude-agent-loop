@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Pipeline relay** (`payload/hooks/pipeline-relay.sh`, PostToolUse matched on
+  the `Skill` tool) — stops the design chain from terminating at a spec.
+  Observed on live sessions: three separate sessions tripped the work-order
+  gate, and all three reached `superpowers:brainstorming` and stopped there —
+  one wrote a design spec and then began implementing from it directly (94 Bash
+  calls, no plan, no work order). Zero work orders and zero pipeline-tool
+  invocations resulted, verified by grepping every Bash call in each transcript
+  rather than by string presence in context. The relay injects the next link
+  when either design skill is launched: brainstorming points at `writing-plans`
+  and warns that a spec is not a decomposition; `writing-plans` points at
+  `plan_task.py --from-plan` and names the per-part dispatch, log, and assess
+  steps. Silent on every other skill and every other tool. Matches on the skill
+  leaf after any plugin prefix, case-insensitively. Re-arms per (session, link)
+  on `PIPELINE_RELAY_REARM_MINUTES` (default 60). Fail-open, always exits 0;
+  kill switch `PIPELINE_RELAY_DISABLE=1`. The `Skill` tool returns immediately,
+  so this fires at skill **entry**, not completion — the wording plants the next
+  step before the work. Covered by the 19-assertion
+  `payload/tools/tests/test_pipeline_relay.sh`.
 - **Work-order gate** (`payload/hooks/workorder-gate.sh`, UserPromptSubmit) —
   the mechanical half of the work-order pipeline. Scores every prompt through
   `plan_task.py --classify` and injects the decomposition directive when it
