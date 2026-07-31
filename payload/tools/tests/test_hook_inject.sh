@@ -1,22 +1,47 @@
 #!/bin/bash
-# Tests the SessionStart hook: normal output + corrupt-registry degradation.
-# Targets the payload hook (payload/hooks/inject-resource-loop.sh), which
-# hardcodes $HOME/.claude/registry/REGISTRY.md internally — so the
-# degraded-mode case below still exercises this machine's installed registry.
+# Tests the SessionStart hook: PENDING-WORK-ONLY output.
+#
+# Rewritten for the behaviour 2a5d7bb shipped. The hook no longer prints a
+# static directive or cats the registry index — both are static text that now
+# live in ~/.claude/CLAUDE.md as part of the cached prompt prefix. It emits ONLY
+# state that changed since the last session, and NOTHING AT ALL when there is no
+# pending work. The old assertions ("REGISTRY INDEX", "INDEX unavailable") tested
+# output that was deliberately removed, and the degraded case moved this
+# machine's REAL registry aside to do it — a hazard as well as a stale test.
+#
+# Every case runs under an isolated HOME so the live ~/.claude is never touched.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 H="$HERE/../../hooks/inject-resource-loop.sh"
-R="$HOME/.claude/registry/REGISTRY.md"
 fails=0
-out=$("$H"); rc=$?
-[ $rc -eq 0 ] || { echo "FAIL: exit $rc"; fails=1; }
-echo "$out" | grep -q '<resource-loop>' || { echo "FAIL: no directive"; fails=1; }
-echo "$out" | grep -q 'REGISTRY INDEX' || { echo "FAIL: no index"; fails=1; }
-mv "$R" "$R.bak"
-out=$("$H"); rc=$?
-mv "$R.bak" "$R"
-[ $rc -eq 0 ] || { echo "FAIL: corrupt-case exit $rc"; fails=1; }
-echo "$out" | grep -q 'INDEX unavailable' || { echo "FAIL: no degraded notice"; fails=1; }
+
+# Silence is the correct output when nothing is pending. An empty isolated HOME
+# has no themes file, no digest ledger, and no closed work orders.
+QUIET_HOME="$(mktemp -d 2>/dev/null || mktemp -d -t calquiet)"
+mkdir -p "$QUIET_HOME/.claude/learning"
+out=$(env HOME="$QUIET_HOME" "$H"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: quiet-case exit $rc"; fails=1; }
+[ -z "$out" ] || { echo "FAIL: emitted output with nothing pending: $out"; fails=1; }
+
+# A closed work order surfaces as exactly one line, inside the tags, and the
+# artifact is consumed so the same nudge never repeats.
+CLOSE_HOME="$(mktemp -d 2>/dev/null || mktemp -d -t calclose)"
+mkdir -p "$CLOSE_HOME/.claude/metrics/state/loop-close" "$CLOSE_HOME/.claude/learning"
+cat > "$CLOSE_HOME/.claude/metrics/state/loop-close/s1.json" <<'JSON'
+{"session_id":"s1","closed":[{"plan_id":"wo-x","parts":3,"linked":1,
+ "verdicts":{"clean":2,"dirty":1}}],"firings":[]}
+JSON
+out=$(env HOME="$CLOSE_HOME" "$H"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: loop-close exit $rc"; fails=1; }
+printf '%s\n' "$out" | grep -q '<resource-loop>' \
+  || { echo "FAIL: loop-close nudge not wrapped in tags"; fails=1; }
+n=$(printf '%s\n' "$out" | grep -c 'Loop closed 1 work order(s), 3 part(s) assessed')
+[ "$n" -eq 1 ] || { echo "FAIL: expected 1 loop-close line, got $n"; fails=1; }
+[ -f "$CLOSE_HOME/.claude/metrics/state/loop-close/s1.json" ] \
+  && { echo "FAIL: loop-close artifact not consumed"; fails=1; }
+out=$(env HOME="$CLOSE_HOME" "$H")
+[ -z "$out" ] || { echo "FAIL: loop-close nudge repeated: $out"; fails=1; }
+rm -rf "$QUIET_HOME" "$CLOSE_HOME"
 
 # --- Loop-themes nudge (P4) --------------------------------------------------
 # The hook resolves the counter tool and the themes file from $HOME/.claude, so

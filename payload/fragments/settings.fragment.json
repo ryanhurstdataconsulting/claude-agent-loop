@@ -36,6 +36,14 @@
             "command": "$HOME/.claude/hooks/harvest-metrics.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/loop-close.sh"
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -62,6 +70,15 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/usage-budget.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pipeline-relay.sh"
           }
         ]
       }

@@ -15,6 +15,14 @@ export CLAUDE_DIR="$TMP/claude"
 export METRICS_DIR="$TMP/metrics"
 export CONTEXT_BUDGET_CHECK_SECS=0   # disable throttling unless a case overrides it
 
+# PIN the budget. Every fixture below is sized against the hook's 150,000-token
+# default, but CONTEXT_BUDGET_TOKENS is commonly set in a real settings.json
+# `env` block (this machine runs 700000). Inheriting it makes every occupancy
+# fixture fall below the warn threshold and silently turns six real assertions
+# into failures that look like hook regressions. The suite must not depend on
+# the machine it runs on.
+export CONTEXT_BUDGET_TOKENS=150000
+
 TRANSCRIPT="$TMP/transcript.jsonl"
 CKPT_DIR="$METRICS_DIR/state/budget/checkpoints"
 
