@@ -95,13 +95,29 @@ def ensure_store(root):
 
 
 def assert_no_remote(root):
-    """Raise :class:`StoreUnsafe` if the store repo at ``root`` has any remote.
+    """Raise :class:`StoreUnsafe` if the store at ``root`` violates local-only isolation.
 
     The store holds client package names and audit findings that must never
-    be pushed anywhere — this is the enforcement point for that invariant,
-    meant to be called before anything writes to or reads from the store.
+    be pushed anywhere and must never be swallowed into an enclosing repo's
+    history — this is the enforcement point for both halves of that
+    invariant, meant to be called before anything writes to or reads from
+    the store. Checks, in order: (1) the store's own repo has no configured
+    remote; (2) no enclosing repository tracks the store path (which would
+    let it be committed as a nested gitlink/submodule).
     """
     root = pathlib.Path(root)
+    _assert_no_git_remote(root)
+    _assert_not_nested_in_tracked_parent(root)
+
+
+def _assert_no_git_remote(root):
+    """Raise :class:`StoreUnsafe` if ``git remote`` reports a remote — or fails.
+
+    Fails CLOSED: if ``git remote`` cannot be run to completion (non-zero
+    exit — e.g. a corrupted or unreadable ``.git/config``), that is treated
+    as a violation, not a pass. An unreadable answer is not evidence the
+    invariant holds; only a confirmed-empty remote list is.
+    """
     try:
         result = subprocess.run(
             ["git", "remote"],
@@ -112,11 +128,65 @@ def assert_no_remote(root):
     except OSError as exc:
         raise StoreUnsafe(f"git is unavailable — cannot verify store at {root}: {exc}")
 
+    if result.returncode != 0:
+        raise StoreUnsafe(
+            f"could not verify store at {root} has no remote — `git remote` "
+            f"exited {result.returncode}: {result.stderr.strip()} — inability "
+            "to verify the no-remote invariant is not evidence it holds"
+        )
+
     remotes = result.stdout.strip()
     if remotes:
         named = ", ".join(remotes.splitlines())
         raise StoreUnsafe(
             f"store repo has a remote ({named}) — this store is local-only by design"
+        )
+
+
+def _assert_not_nested_in_tracked_parent(root):
+    """Raise :class:`StoreUnsafe` if the store's parent directory is a git repo
+
+    that does not gitignore the store path.
+
+    The store must stand alone — never get pulled into a parent project as a
+    nested gitlink/submodule. The parent repo is expected to gitignore the
+    store path so no gitlink can ever form; this asks git, from the store's
+    immediate parent directory, whether that expectation actually holds. A
+    parent that is not itself a git repository, or a git binary that is
+    unavailable, cannot violate this invariant — those cases pass rather
+    than crash or block on an unrelated environment gap. Likewise, only a
+    confirmed "not ignored" (``git check-ignore`` exit code 1) is treated as
+    a violation; any other ambiguous git-check-ignore outcome passes.
+    """
+    root = pathlib.Path(root).resolve()
+    parent = root.parent
+
+    try:
+        in_repo = subprocess.run(
+            ["git", "-C", str(parent), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return  # git unavailable — nothing to verify
+    if in_repo.returncode != 0 or in_repo.stdout.strip() != "true":
+        return  # parent is not a git repository — nothing to verify
+
+    try:
+        ignored = subprocess.run(
+            ["git", "-C", str(parent), "check-ignore", "-q", str(root)],
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return  # git unavailable — nothing to verify
+
+    if ignored.returncode == 1:
+        raise StoreUnsafe(
+            f"store at {root} sits inside a git-tracked parent repository at "
+            f"{parent} that does not gitignore it — this would let the store "
+            "be committed as a nested gitlink/submodule; add its path to the "
+            "parent repository's .gitignore"
         )
 
 
