@@ -193,34 +193,38 @@ class TestSelectDue(unittest.TestCase):
         self.assertIn("a", picked)
         self.assertIn("unknown", picked["a"]["reason"].lower())
 
+    def _write_run_log(self, pkg, days_ago, sha):
+        run_dir = pathlib.Path(self.tmp) / "audit" / "runs" / pkg
+        run_dir.mkdir(parents=True)
+        (run_dir / "log.json").write_text(json.dumps(state(days_ago, sha)))
+
     def test_longest_overdue_sorts_first(self):
-        # "a" was audited recently at its (moved) head -> not due.
-        # "b" is overdue by a lot; give it a real git repo and matching
-        # recorded head so it is due purely on interval, not on "unknown".
-        pkg_b = pathlib.Path(self.ws) / "b"
-        pkg_b.mkdir()
-        subprocess.run(["git", "init", "-q"], cwd=str(pkg_b), capture_output=True)
-        subprocess.run(["git", "config", "user.email", "t@example.com"],
-                        cwd=str(pkg_b), capture_output=True)
-        subprocess.run(["git", "config", "user.name", "T"],
-                        cwd=str(pkg_b), capture_output=True)
-        (pkg_b / "f.txt").write_text("x")
-        subprocess.run(["git", "add", "f.txt"], cwd=str(pkg_b), capture_output=True)
-        subprocess.run(["git", "commit", "-q", "-m", "init"],
-                        cwd=str(pkg_b), capture_output=True)
-        sha_b = subprocess.run(["git", "-C", str(pkg_b), "rev-parse", "HEAD"],
-                                capture_output=True, text=True).stdout.strip()
-        run_dir_b = pathlib.Path(self.tmp) / "audit" / "runs" / "b"
-        run_dir_b.mkdir(parents=True)
-        (run_dir_b / "2026-01-01.json").write_text(json.dumps({
-            "last_audit_date": "2026-01-01T00:00:00Z",
-            "last_audited_sha": "some-old-sha-not-" + sha_b,
-        }))
-        cfg = {"schema": 1, "per_night_cap": 4, "tiers": {
-            "weekly": {"interval_days": 7, "packages": ["b"]}}}
-        picked = ad.select_due(self.tmp, cfg, self.ws, NOW)
-        self.assertEqual(picked[0]["package"], "b")
-        self.assertIn("due", picked[0]["reason"].lower())
+        # Four due packages at clearly different staleness. None exist on
+        # disk under self.ws, so head is unknown for all of them and every
+        # one is due regardless of interval — that isolates the *sort*
+        # itself (the thing under test) from the due/not-due decision
+        # (covered elsewhere). "d" has no run log at all (never audited),
+        # which must be the single most-overdue case of the four.
+        self._write_run_log("a", 60, "sha-a")
+        self._write_run_log("b", 30, "sha-b")
+        self._write_run_log("c", 10, "sha-c")
+        cfg = {"schema": 1, "per_night_cap": 10, "tiers": {
+            "weekly": {"interval_days": 7, "packages": ["a", "b", "c", "d"]}}}
+        picked = [p["package"] for p in ad.select_due(self.tmp, cfg, self.ws, NOW)]
+        self.assertEqual(picked, ["d", "a", "b", "c"])
+
+    def test_cap_keeps_the_most_overdue_entries(self):
+        # Same four packages/staleness as above, but capped to 2 — the two
+        # kept must be the two MOST overdue ("d" then "a"), not just any 2
+        # of the 4 due packages. Distinguishes a real sort-then-truncate
+        # from a cap applied to an arbitrary/insertion order.
+        self._write_run_log("a", 60, "sha-a")
+        self._write_run_log("b", 30, "sha-b")
+        self._write_run_log("c", 10, "sha-c")
+        cfg = {"schema": 1, "per_night_cap": 2, "tiers": {
+            "weekly": {"interval_days": 7, "packages": ["a", "b", "c", "d"]}}}
+        picked = [p["package"] for p in ad.select_due(self.tmp, cfg, self.ws, NOW)]
+        self.assertEqual(picked, ["d", "a"])
 
 
 class TestSelectDueResilience(unittest.TestCase):
@@ -253,6 +257,39 @@ class TestSelectDueResilience(unittest.TestCase):
         self.assertIn("b", by_name)
         self.assertIn("disk exploded", by_name["a"]["reason"])
         self.assertTrue(by_name["a"]["due"])
+
+    def test_non_dict_tier_does_not_abort_other_tiers(self):
+        # Reachable from a hand-edited config.json: audit_store.load_config
+        # does not validate tier shape. A tier value that isn't a dict must
+        # not take the whole selection down with it.
+        cfg = {"schema": 1, "per_night_cap": 10, "tiers": {
+            "broken": ["not", "a", "dict"],
+            "weekly": {"interval_days": 7, "packages": ["a"]}}}
+        picked = ad.select_due(self.tmp, cfg, self.ws, NOW)
+        names = [p["package"] for p in picked]
+        self.assertIn("a", names)
+
+    def test_non_dict_tier_reports_itself_as_a_loud_due_entry(self):
+        cfg = {"schema": 1, "per_night_cap": 10, "tiers": {
+            "broken": ["not", "a", "dict"]}}
+        picked = ad.select_due(self.tmp, cfg, self.ws, NOW)
+        self.assertEqual(len(picked), 1)
+        self.assertTrue(picked[0]["due"])
+        self.assertIn("broken", picked[0]["reason"])
+
+    def test_non_string_package_entry_does_not_abort_the_tier(self):
+        # A stray numeric id (or any non-string) in "packages" must become
+        # a loud due entry for itself, not an AttributeError/TypeError that
+        # takes its sibling packages down with it.
+        cfg = {"schema": 1, "per_night_cap": 10, "tiers": {
+            "weekly": {"interval_days": 7, "packages": [123, "a"]}}}
+        picked = ad.select_due(self.tmp, cfg, self.ws, NOW)
+        names = [p["package"] for p in picked]
+        self.assertIn("a", names)
+        self.assertIn(123, names)
+        broken = [p for p in picked if p["package"] == 123][0]
+        self.assertTrue(broken["due"])
+        self.assertTrue(broken["reason"])
 
 
 class TestMainCli(unittest.TestCase):

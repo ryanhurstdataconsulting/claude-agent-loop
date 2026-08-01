@@ -175,16 +175,40 @@ def select_due(root, cfg, workspace, now):
     A single package raising during evaluation never aborts the rest of
     the selection: the failure is caught per-package and turned into a due
     entry whose reason names the error, so a broken package is loud in the
-    output rather than silently missing from it.
+    output rather than silently missing from it. The same holds one level
+    up: ``audit_store.load_config`` does not validate tier shape or
+    package-entry types, so a hand-edited ``config.json`` can hand this
+    function a tier that isn't a dict, or a ``packages`` entry that isn't a
+    string. Both are read inside a guarded region for exactly that reason —
+    a malformed tier becomes one loud entry naming the error and the other
+    tiers still run; a malformed package entry becomes one loud entry for
+    itself and its sibling packages still run.
     """
     entries = []
     for tier_name, tier in (cfg.get("tiers") or {}).items():
         if tier_name == EXCLUDED_TIER:
             continue
-        interval_days = tier.get("interval_days", 0)
-        for package in tier.get("packages", []) or []:
-            pkg_path = os.path.join(workspace, package)
+
+        try:
+            interval_days = tier.get("interval_days", 0)
+            packages = list(tier.get("packages", []) or [])
+        except Exception as exc:  # noqa: BLE001 - deliberately broad, see docstring
+            entries.append({
+                "package": None,
+                "tier": tier_name,
+                "interval_days": None,
+                "path": None,
+                "head": None,
+                "due": True,
+                "reason": "error reading tier %r: %s: %s"
+                          % (tier_name, type(exc).__name__, exc),
+                "staleness_days": None,
+            })
+            continue
+
+        for package in packages:
             try:
+                pkg_path = os.path.join(workspace, package)
                 head = head_sha(pkg_path)
                 state = last_state(root, package)
                 due, reason = is_due(package, interval_days, state, head, now)
@@ -194,7 +218,7 @@ def select_due(root, cfg, workspace, now):
                     "package": package,
                     "tier": tier_name,
                     "interval_days": interval_days,
-                    "path": pkg_path,
+                    "path": None,
                     "head": None,
                     "due": True,
                     "reason": "error evaluating package %r: %s: %s"
