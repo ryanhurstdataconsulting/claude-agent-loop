@@ -7,13 +7,14 @@ datum cannot ride into a commit. Pass an explicit file or directory to scan a
 handoff bundle before it ships.
 
 Leak classes detected:
-  - JWT              three-part ``eyJ...`` tokens
-  - BEARER          ``Bearer <token>`` authorization values
-  - SECRET          ``password`` / ``api_key`` / ``secret`` / token assignments
-  - PEM             ``BEGIN ... PRIVATE KEY`` header blocks
-  - DB-URI          ``postgres://user:pass@host`` connection URIs
-  - EMAIL           email addresses
-  - USERPATH        absolute ``/Users/<name>/`` paths (machine-specific leakage)
+  - JWT — three-part ``eyJ...`` tokens
+  - BEARER — ``Bearer <token>`` authorization values
+  - SECRET — ``password`` / ``api_key`` / ``secret`` / token assignments
+  - PEM — ``BEGIN ... PRIVATE KEY`` header blocks
+  - AWS-KEY — bare AWS access key IDs (``AKIA...``, ``ASIA...``)
+  - DB-URI — ``postgres://user:pass@host`` connection URIs
+  - EMAIL — email addresses
+  - USERPATH — absolute ``/Users/<name>/`` paths (machine-specific leakage)
 
 Output is ``file:line: <CLASS>  [REDACTED-<CLASS>]`` — the matched secret is
 never echoed, in full or in part. Exits non-zero on any hit, zero when clean.
@@ -52,10 +53,22 @@ _PEM_HEADER = re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")
 # Absolute per-user path — bakes a machine-specific username into an artifact.
 _USER_PATH = re.compile(r"/Users/[^/\s\"'<>]+(?:/[^\s\"'<>]*)?")
 
+# AWS access key ID — a fixed-prefix, fixed-length identifier (4-char type
+# prefix + 16 upper-alphanumerics). It names an account and a principal, so it
+# is a leak on its own, and it appears bare rather than as `key = value`, which
+# is why the generic SECRET assignment pattern never sees it. The prefix list
+# is AWS's published set (AKIA long-term, ASIA temporary session, and the
+# resource-identifier prefixes that share the shape).
+_AWS_KEY_ID = re.compile(
+    r"\b(?:AKIA|ABIA|ACCA|AGPA|AIDA|AIPA|ANPA|ANVA|APKA|AROA|ASIA)"
+    r"[A-Z0-9]{16}\b"
+)
+
 # Order matters: earlier patterns consume their span so later ones cannot
 # double-count it. PEM and the postgres URI go before the generic scanners.
 PATTERNS = [
     ("PEM", _PEM_HEADER),
+    ("AWS-KEY", _AWS_KEY_ID),
     ("JWT", _DT["JWT"]),
     ("BEARER", _DT["TOKEN"]),
     ("DB-URI", _DT["DB-URI"]),
