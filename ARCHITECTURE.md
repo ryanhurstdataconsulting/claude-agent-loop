@@ -103,6 +103,81 @@ fleet pulls merged contributions on its next session.
 
 ---
 
+## The repo-audit scheduling layer
+
+A separate, launchd-triggered subsystem wraps the pre-existing
+`repo-security-auditor` agent (an owner-local resource, not bundled by this
+export) in a rotating, unattended nightly sweep across many packages, on a
+cadence tiered by how sensitive or fast-moving each one is. Where the
+resource loop above is session-shaped — one hook, one skill, driven by a
+human starting a session — this layer is calendar-shaped: it runs whether or
+not anyone is at the keyboard, so its whole design leans on non-disturbance
+and severity-gated surfacing rather than on a human being present to notice
+something going wrong.
+
+```
+  launchd (03:17 daily, off the :00 mark so a fleet does not stampede)
+        │
+        ▼
+  audit_dispatch.py --workspace DIR          payload/tools/audit_dispatch.py
+   • reads audit_store's audit/config.json tiers
+   • per package: head_sha() + is_due() — tier interval elapsed AND HEAD
+     moved, never audited, or unverifiable all count as due
+   • pure policy — never runs an audit itself, never shells out
+        │ due list (package, reason), longest-overdue first, capped
+        ▼
+  audit_run.sh <pkg> <store>                 payload/tools/audit_run.sh
+   • throwaway `git worktree`, detached HEAD — the live checkout is
+     never read or written
+   • headless `claude --agent repo-security-auditor`, scoped to the
+     worktree, tool allowlist narrowed to read-only git subcommands
+   • secret/PII scrub + grammar gates run on the findings BEFORE any
+     branch or commit exists
+   • commits to `audit/security-<date>` in the package's own repo;
+     NEVER pushes
+        │ run-log JSON, one per package per night
+        ▼
+  audit_store.py                             payload/tools/audit_store.py
+   • ~/.claude/metrics/audit/{runs,findings,digests}
+   • its own nested git repo, no remote — see the amended metrics
+     store contract below
+        │
+        ▼
+  audit_digest.py                            payload/tools/audit_digest.py
+   • severity-gated: Critical/High (or a blocked/failed verdict)
+     interrupt immediately via the same OS notification audit_run.sh
+     already fires; everything else waits
+   • --nudge surfaces an unread digest once at SessionStart, the same
+     self-consuming shape as the loop-close digest nudge
+```
+
+**Dispatch is currently the wired entry point; per-package execution is the
+next link, not yet automated.** The launchd job's `ProgramArguments` invoke
+`audit_dispatch.py` directly — it prints tonight's due list to the job's log
+and stops there. Chaining that list into per-package `audit_run.sh`
+invocations, and a closing `audit_digest.py` render, is deliberately left as
+a follow-on wiring step: this task installs the plist and documents the four
+tools that make up the layer, but loading the job (`launchctl load`) and the
+first live run are reserved for the owner, not run here.
+
+**A decision recorded here, not re-litigated: the git tool allowlist.**
+`audit_run.sh` narrows the headless agent's Bash allowlist to read-only git
+subcommands named one at a time (`git log`, `git diff`, `git ls-files`, `git
+status`, `git rev-parse`) instead of the blanket `Bash(git:*)` the original
+design spec specified. `--add-dir` constrains the file-editing tools to the
+worktree, but it has no effect on `Bash`, and the live package checkout sits
+one `git rev-parse --git-common-dir` away from inside that worktree — a
+blanket git allowlist would let an unattended agent, reading a package's own
+(potentially adversarial) content, run `checkout`/`reset`/`push` against the
+developer's real repository, with nothing but prompt text standing in the
+way. Prompt text is not a control for an unattended auditor. The controller
+ruling on this: the spec is amended, not the script loosened — the
+`2026-07-31-repo-security-audit-scheduling-design.md` spec (local-only, kept
+outside this repo) has been updated to match the shipped allowlist, which is
+authoritative.
+
+---
+
 ## The bootstrap skill — tailoring the generic bundle to you
 
 Everything above is generic on first install: the registry lists resources
@@ -240,6 +315,20 @@ The Resource Loop records one JSON object per line to a monthly shard at
 (`payload/tools/harvest_metrics.py`) and the PreCompact hook are the only
 writers; everything downstream is a reader.
 
+**`~/.claude/metrics/` is now a standalone nested git repo.** The repo-audit
+scheduling layer's `audit_store.ensure_store()` git-inits the metrics
+directory in place the first time it runs, and `assert_no_remote()` enforces,
+on every read, that no remote is ever configured for it — checked by asking
+`git remote` directly (failing CLOSED on any non-zero exit, since an
+unverifiable answer is not evidence the invariant holds) and by confirming no
+enclosing repository tracks the path without gitignoring it. `~/.claude/metrics`
+is the loop output root for every agent, not only the audit layer: the
+`YYYY-MM.jsonl` shards described below and the audit layer's
+`audit/{runs,findings,digests}` tree are siblings under the same root and now
+share the same local git history, giving every write in either family a
+recoverable, versioned home. Nothing about the shards' own format, writers, or
+"not publishable" contract changes — see below.
+
 | Field | Meaning |
 |---|---|
 | `kind` | `task` · `session` · `score` · `learn` · `compaction` |
@@ -299,13 +388,16 @@ The backfill is idempotent across repeated SessionEnd events (resumed
 sessions): the harvest cursor records which session resource list each agent
 was backfilled with, and an unchanged session re-emits nothing.
 
-**Not publishable — local-only by design.** Metrics records embed project
-slugs and git branch names that identify client work, and `redact()` scrubs
-credentials only — not those identifiers. The `metrics/` directory is untracked
-for exactly this reason. A metrics record MUST NOT be copied into any tracked or
-publishable file without first passing the P5 visibility classifier
-(`classify_visibility.py`); default-deny routes anything CLIENT or UNSURE back
-to local-only files.
+**Not publishable — local-only by design, unchanged by the nested repo.**
+Metrics records embed project slugs and git branch names that identify client
+work, and `redact()` scrubs credentials only — not those identifiers. The
+`metrics/` directory is untracked by every enclosing repo for exactly this
+reason, and giving it its own local git history does not loosen that: the
+nested repo carries no remote, so versioning run history in place creates no
+new publication path, only a recoverable one. A metrics record MUST NOT be
+copied into any tracked or publishable file without first passing the P5
+visibility classifier (`classify_visibility.py`); default-deny routes anything
+CLIENT or UNSURE back to local-only files.
 
 ---
 

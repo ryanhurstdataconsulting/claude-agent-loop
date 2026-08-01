@@ -214,6 +214,10 @@ link-file hooks/loop-close.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/assess_task.py
+link-file tools/audit_digest.py
+link-file tools/audit_dispatch.py
+link-file tools/audit_run.sh
+link-file tools/audit_store.py
 link-file tools/build_watch.sh
 link-file tools/check_coverage.sh
 link-file tools/classify_visibility.py
@@ -248,6 +252,7 @@ link-dir tools/templates
 link-dir tools/tests
 
 # --- launchd/ ---------------------------------------------------------------
+link-file launchd/com.hdc.claude-agent-loop.repo-audit.plist
 link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
 
 # --- registry/guides/ (30 guides + template) --------------------------------
