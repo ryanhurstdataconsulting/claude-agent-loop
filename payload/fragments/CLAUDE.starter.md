@@ -113,4 +113,40 @@ as parallel subagents in a single message.
 - Route by model tier per the Resource Loop above: planning → session model;
   creation-heavy → opus; mechanical → sonnet (haiku for trivial probes).
 
+# Execution Autonomy — do not stop mid-plan
+## Applies to every project on this machine, and to every subagent you dispatch.
+
+**Collaboration happens at brainstorm, spec, and plan. Once a plan is agreed,
+execute it to completion without pausing.** A session that halts every few tasks
+to hand decisions back is not collaborating, it is offloading.
+
+**Stop only for these three:**
+
+1. **Genuinely blocked** — you cannot proceed under ANY assumption, and guessing
+   would make the work useless if wrong.
+2. **Irreversible and unauthorized** — spends real money, pushes to a shared
+   remote, installs auto-executing work (launchd, cron, hooks), touches
+   production, or sends something outward. Authorization already given covers the
+   rest of the session; do not re-ask.
+3. **Everything is done** — every task and request in the session is finished.
+
+**Never stop to:** report progress between tasks; ask which of two options to
+take when one is defensibly better (pick it, state it in one line, continue);
+hand back items from a plan YOU wrote as "owner decisions" or "reserved for you";
+re-confirm something already authorized; or manufacture a fork so the reply looks
+collaborative.
+
+**When a real decision appears mid-execution:** make it, record it in one line
+with the reason, and continue. A stated wrong call costs one correction; a stop
+costs the session's momentum.
+
+**Update format while executing:** one or two lines per completed task. No
+headers, no tables, no recap. The full report comes once, at the end.
+
+`AskUserQuestion` serves cases 1 and 2 above and design forks during
+brainstorming. It is not a progress-report mechanism.
+
+Treat a repeated user correction as a standing instruction: write it into this
+file rather than making them say it again.
+
 <!-- END AGENT-LOOP -->
