@@ -36,6 +36,10 @@ Contracts worth stating explicitly, because callers rely on them:
   crashes, hangs, or exits non-zero never aborts the rest of the sweep.
 * A tier named exactly ``"excluded"`` is skipped entirely, regardless of its
   ``interval_days`` value.
+* The workspace root — the directory each package name is resolved against —
+  comes from ``--workspace``, else the store config's ``workspace`` key, else
+  ``~/dev``. See :func:`resolve_workspace` for why the config, and not the
+  launchd plist, is the right place for a machine's real answer.
 * ``--dry-run`` prints exactly what would happen and invokes nothing, so the
   launchd job can be exercised end to end without spending a cent.
 
@@ -59,6 +63,13 @@ DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 EXCLUDED_TIER = "excluded"
 AUDIT_RUN_BIN_ENV = "AUDIT_RUN_BIN"
 NOTIFY_ENV = "AUDIT_NOTIFY"
+
+#: Where packages are looked for when neither ``--workspace`` nor the store
+#: config says otherwise. ``~/dev`` is a convention, not this machine's real
+#: answer, and that is the point: the launchd template is copied verbatim onto
+#: any machine, so the real root belongs in the local-only store config, which
+#: is never committed, rather than baked into a shipped file.
+DEFAULT_WORKSPACE = "~/dev"
 
 
 def head_sha(pkg_path):
@@ -299,6 +310,46 @@ def select_due(root, cfg, workspace, now):
     return entries
 
 
+def resolve_workspace(cli_value, cfg):
+    """Return the workspace root packages are resolved against.
+
+    Precedence, highest first:
+
+    1. ``--workspace`` on the command line — an operator running the sweep by
+       hand against some other tree always wins.
+    2. ``cfg["workspace"]`` from ``<store>/audit/config.json``.
+    3. :data:`DEFAULT_WORKSPACE`.
+
+    The config is the intended home for the real answer. It is local-only,
+    lives beside the package list it belongs with, and is never committed,
+    whereas the launchd plist is a template shipped verbatim to any machine —
+    a `$HOME`-relative workspace baked into that template is wrong on every
+    machine but the one it was written on, and silently audits the wrong tree
+    rather than failing.
+
+    ``~`` is expanded, because the config is hand-written and ``~/dev/...`` is
+    how a human writes a home-relative path. A ``workspace`` key that is
+    present but is not a non-empty string raises :class:`ConfigError` rather
+    than falling back: a malformed root would resolve every package to a path
+    that does not exist, and the whole sweep would report "never audited"
+    forever with no indication why.
+    """
+    if cli_value:
+        return os.path.expanduser(cli_value)
+
+    configured = (cfg or {}).get("workspace")
+    if configured is not None:
+        if not isinstance(configured, str) or not configured.strip():
+            raise audit_store.ConfigError(
+                "the 'workspace' key in audit/config.json must be a non-empty "
+                "string naming the directory that holds the packages; got %r"
+                % (configured,)
+            )
+        return os.path.expanduser(configured.strip())
+
+    return os.path.expanduser(DEFAULT_WORKSPACE)
+
+
 def audit_run_bin():
     """Resolve the ``audit_run.sh`` this sweep will invoke.
 
@@ -444,8 +495,10 @@ def main(argv=None):
     )
     parser.add_argument(
         "--workspace",
-        required=True,
-        help="directory holding one subdirectory per package named in config.json",
+        default=None,
+        help="directory holding one subdirectory per package named in "
+             "config.json (default: the 'workspace' key in audit/config.json, "
+             "else %s)" % DEFAULT_WORKSPACE,
     )
     parser.add_argument(
         "--json",
@@ -474,9 +527,10 @@ def main(argv=None):
     audit_store.ensure_store(root)
     audit_store.assert_no_remote(root)
     cfg = audit_store.load_config(root)
+    workspace = resolve_workspace(args.workspace, cfg)
     now = datetime.datetime.now(datetime.timezone.utc)
     since = now.strftime(DATE_FORMAT)
-    due = select_due(root, cfg, args.workspace, now)
+    due = select_due(root, cfg, workspace, now)
     runner = args.audit_run_bin if args.audit_run_bin is not None else audit_run_bin()
 
     if args.dry_run:

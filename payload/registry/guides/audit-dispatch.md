@@ -28,15 +28,26 @@ is the only way to guarantee it.
   the job's only entry point and it runs the entire sweep.
 - Manually, to preview tonight's selection and the exact command each package
   would get, spending nothing:
-  `python3 audit_dispatch.py --workspace ~/dev --dry-run`.
+  `python3 audit_dispatch.py --dry-run` (add `--workspace DIR` to point it at
+  a tree other than the configured one).
 
 ## Interface (how to invoke)
 ```
-audit_dispatch.py --workspace DIR [--root DIR] [--json] [--dry-run]
+audit_dispatch.py [--workspace DIR] [--root DIR] [--json] [--dry-run]
                   [--audit-run-bin PATH]
 ```
-`--workspace` is the directory holding one subdirectory per package named in
-`config.json`. A plain invocation **runs the audits**: it prints the due list,
+The workspace is the directory holding one subdirectory per package named in
+`config.json`. It is resolved in this order: `--workspace` on the command
+line, then the `workspace` key in `<store>/audit/config.json`, then `~/dev`.
+The config key is the intended home for a machine's real answer — it is
+local-only, never committed, and sits beside the package list it belongs with,
+whereas the launchd plist is a template shipped verbatim to every machine and
+so must not name one machine's home directory. A `workspace` key that is
+present but is not a non-empty string raises `ConfigError` rather than falling
+back, because a malformed root resolves every package to a path that does not
+exist and the sweep would report "never audited" forever with no clue why.
+
+A plain invocation **runs the audits**: it prints the due list,
 invokes `audit_run.sh <path> <root> --key <package>` per package in sequence,
 renders one digest, and fires an alert per package. `--dry-run` prints the
 same plan and invokes nothing — use it to exercise the launchd job safely.

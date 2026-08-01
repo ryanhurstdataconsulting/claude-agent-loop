@@ -529,6 +529,106 @@ class TestOrchestration(unittest.TestCase):
         self.assertTrue(any("2 critical" in n for n in notified))
 
 
+class TestResolveWorkspace(unittest.TestCase):
+    """Where packages are looked for: CLI, then store config, then the default.
+
+    The launchd plist is a template shipped verbatim to every machine, so it
+    names no workspace at all; the real root lives in the local-only store
+    config. These cases pin the precedence that makes that work.
+    """
+
+    def test_the_cli_flag_wins_over_the_config(self):
+        self.assertEqual(
+            ad.resolve_workspace("/cli/root", {"workspace": "/config/root"}),
+            "/cli/root")
+
+    def test_the_config_key_is_used_when_no_flag_is_given(self):
+        self.assertEqual(
+            ad.resolve_workspace(None, {"workspace": "/config/root"}),
+            "/config/root")
+
+    def test_the_documented_default_is_used_when_neither_is_given(self):
+        self.assertEqual(ad.resolve_workspace(None, {}),
+                         os.path.expanduser(ad.DEFAULT_WORKSPACE))
+
+    def test_a_missing_config_object_falls_back_to_the_default(self):
+        self.assertEqual(ad.resolve_workspace(None, None),
+                         os.path.expanduser(ad.DEFAULT_WORKSPACE))
+
+    def test_a_tilde_is_expanded_from_either_source(self):
+        # The config is hand-written, and "~/dev/..." is how a human writes a
+        # home-relative path; an unexpanded "~" would be a literal directory.
+        home = os.path.expanduser("~")
+        self.assertEqual(ad.resolve_workspace(None, {"workspace": "~/somewhere"}),
+                         os.path.join(home, "somewhere"))
+        self.assertEqual(ad.resolve_workspace("~/elsewhere", {}),
+                         os.path.join(home, "elsewhere"))
+
+    def test_surrounding_whitespace_in_the_config_value_is_trimmed(self):
+        self.assertEqual(ad.resolve_workspace(None, {"workspace": " /root "}),
+                         "/root")
+
+    def test_a_malformed_config_value_raises_rather_than_falling_back(self):
+        # Falling back would resolve every package to a path that does not
+        # exist, and the sweep would report "never audited" forever.
+        for bad in (42, [], "", "   ", {}):
+            with self.assertRaises(st.ConfigError):
+                ad.resolve_workspace(None, {"workspace": bad})
+
+
+class TestWorkspaceEndToEnd(unittest.TestCase):
+    """main() honours the same precedence, with no --workspace on the command line."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.store = os.path.join(self.tmp, "store")
+        st.ensure_store(self.store)
+        self.workspace = os.path.join(self.tmp, "elsewhere")
+        os.makedirs(os.path.join(self.workspace, "p"))
+
+    def _config(self, **extra):
+        cfg = {"schema": 1, "per_night_cap": 5,
+               "tiers": {"weekly": {"interval_days": 7, "packages": ["p"]}}}
+        cfg.update(extra)
+        path = pathlib.Path(self.store) / "audit" / "config.json"
+        path.write_text(json.dumps(cfg))
+
+    def _dry_run(self, *argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = ad.main(["--root", self.store, "--dry-run", *argv])
+        return rc, out.getvalue()
+
+    def test_the_config_workspace_drives_the_resolved_package_path(self):
+        self._config(workspace=self.workspace)
+        rc, out = self._dry_run()
+        self.assertEqual(rc, 0)
+        self.assertIn(os.path.join(self.workspace, "p"), out)
+
+    def test_the_cli_flag_still_overrides_the_config_workspace(self):
+        self._config(workspace=self.workspace)
+        other = os.path.join(self.tmp, "override")
+        os.makedirs(os.path.join(other, "p"))
+        rc, out = self._dry_run("--workspace", other)
+        self.assertEqual(rc, 0)
+        self.assertIn(os.path.join(other, "p"), out)
+        self.assertNotIn(os.path.join(self.workspace, "p"), out)
+
+    def test_no_workspace_anywhere_falls_back_to_the_default(self):
+        self._config()
+        rc, out = self._dry_run()
+        self.assertEqual(rc, 0)
+        self.assertIn(os.path.join(os.path.expanduser(ad.DEFAULT_WORKSPACE), "p"),
+                      out)
+
+    def test_the_flag_is_no_longer_required(self):
+        # It was `required=True`, which is what forced the plist to hardcode a
+        # machine-specific path into a file shipped to every machine.
+        self._config(workspace=self.workspace)
+        self.assertEqual(self._dry_run()[0], 0)
+
+
 class TestAuditRunBinIndirection(unittest.TestCase):
     """The runner is injectable so that no test can ever start a billed run."""
 

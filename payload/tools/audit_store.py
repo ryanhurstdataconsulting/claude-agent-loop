@@ -17,7 +17,8 @@ Layout created by :func:`ensure_store`::
       .git/                  (no remote — see assert_no_remote)
       .gitignore              (scoped: audit/ is tracked, the rest is not)
       audit/
-        config.json           (tier schedule; hand-written, not by this tool)
+        config.json           (tier schedule + workspace root; hand-written,
+                               not by this tool)
         runs/
         findings/
         digests/

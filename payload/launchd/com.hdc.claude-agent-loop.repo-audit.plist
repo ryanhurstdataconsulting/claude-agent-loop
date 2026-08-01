@@ -13,11 +13,20 @@
          expansion in its path keys, so the only way to reach a path under
          $HOME from a template that is copied verbatim onto any machine is to
          redirect from inside the shell command. -->
+    <!-- No --workspace here, deliberately. The directory that holds the
+         packages differs on every machine, and this file is a template
+         shipped verbatim to all of them, so a value baked in here would be
+         wrong everywhere but where it was written — and wrong silently, since
+         a workspace that holds no packages simply audits nothing. The real
+         root belongs beside the package list it goes with, in the local-only
+         store config at ~/.claude/metrics/audit/config.json under the
+         "workspace" key, which is never committed. audit_dispatch falls back
+         to ~/dev when that key is absent. -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>LOGS="$HOME/.claude/metrics/audit/logs"; mkdir -p "$LOGS"; exec /usr/bin/env python3 "$HOME/.claude/tools/audit_dispatch.py" --workspace "$HOME/dev" >>"$LOGS/repo-audit.out.log" 2>>"$LOGS/repo-audit.err.log"</string>
+        <string>LOGS="$HOME/.claude/metrics/audit/logs"; mkdir -p "$LOGS"; exec /usr/bin/env python3 "$HOME/.claude/tools/audit_dispatch.py" >>"$LOGS/repo-audit.out.log" 2>>"$LOGS/repo-audit.err.log"</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
