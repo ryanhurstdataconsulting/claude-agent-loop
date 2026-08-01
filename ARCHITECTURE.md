@@ -123,42 +123,72 @@ something going wrong.
    • reads audit_store's audit/config.json tiers
    • per package: head_sha() + is_due() — tier interval elapsed AND HEAD
      moved, never audited, or unverifiable all count as due
-   • pure policy — never runs an audit itself, never shells out
+   • then DRIVES the sweep: one audit_run.sh per due package, in
+     sequence, and one closing digest — --dry-run prints the plan and
+     invokes nothing
         │ due list (package, reason), longest-overdue first, capped
         ▼
-  audit_run.sh <pkg> <store>                 payload/tools/audit_run.sh
+  audit_run.sh <pkg> <store> --key KEY       payload/tools/audit_run.sh
    • throwaway `git worktree`, detached HEAD — the live checkout is
      never read or written
    • headless `claude --agent repo-security-auditor`, scoped to the
      worktree, tool allowlist narrowed to read-only git subcommands
    • secret/PII scrub + grammar gates run on the findings BEFORE any
-     branch or commit exists
-   • commits to `audit/security-<date>` in the package's own repo;
-     NEVER pushes
-        │ run-log JSON, one per package per night
+     branch or commit exists; a credential in a CODE FIX aborts, one in
+     the findings doc quarantines into the store instead
+   • commits to `audit/security-<date>` in the package's own repo, with
+     the audited repo's hooks disarmed; NEVER pushes
+        │ run-log JSON, one per package per night, at runs/<key>/
         ▼
   audit_store.py                             payload/tools/audit_store.py
-   • ~/.claude/metrics/audit/{runs,findings,digests}
-   • its own nested git repo, no remote — see the amended metrics
-     store contract below
+   • ~/.claude/metrics/audit/{runs,findings,digests,quarantine,logs}
+   • its own nested git repo, no remote, scoped .gitignore, and
+     commit_paths() as the only writer of its history — see the
+     amended metrics store contract below
         │
         ▼
   audit_digest.py                            payload/tools/audit_digest.py
-   • severity-gated: Critical/High (or a blocked/failed verdict)
-     interrupt immediately via the same OS notification audit_run.sh
-     already fires; everything else waits
+   • severity-gated: Critical/High, a blocked/failed/quarantined
+     verdict, or findings that could not be parsed at all interrupt
+     immediately; everything else waits
    • --nudge surfaces an unread digest once at SessionStart, the same
      self-consuming shape as the loop-close digest nudge
 ```
 
-**Dispatch is currently the wired entry point; per-package execution is the
-next link, not yet automated.** The launchd job's `ProgramArguments` invoke
-`audit_dispatch.py` directly — it prints tonight's due list to the job's log
-and stops there. Chaining that list into per-package `audit_run.sh`
-invocations, and a closing `audit_digest.py` render, is deliberately left as
-a follow-on wiring step: this task installs the plist and documents the four
-tools that make up the layer, but loading the job (`launchctl load`) and the
-first live run are reserved for the owner, not run here.
+**The chain is wired end to end.** The launchd job's `ProgramArguments`
+invoke `audit_dispatch.py`, and that one process now owns the whole night:
+select the due packages, run `audit_run.sh` against each in turn, render one
+digest, and fire the alerts. One package failing never aborts the rest.
+`--dry-run` prints exactly what would happen and invokes nothing, so the job
+can be exercised without spending a cent. What remains reserved for the owner
+is loading the job (`launchctl bootstrap`) and the first live run, which
+spends real budget against a real repository.
+
+**The store key is passed, never re-derived.** `audit_dispatch` hands
+`audit_run.sh` the package's own `config.json` string with `--key`, and that
+string is the path the run log is written under. A package key is a
+workspace-relative path, so a runner that derived its own key from
+`basename <package-path>` wrote state one level shallower than
+`last_state()` read it — every nested package then reported "never audited"
+every night, at the cost of a full agent session per package per night.
+Passing the key makes the two sides the same string by construction.
+
+**Two safety rulings recorded here, not re-litigated.** First, the secret
+gate is split by what a hit means. Over the auditor's code fixes a hit aborts
+the commit, because an unattended agent must never introduce a credential
+into a client's source. Over `SECURITY_AUDIT.md` a hit *quarantines*: quoting
+the credential it found is a findings document's job, so the most valuable
+audits are exactly the ones guaranteed to trip the gate, and discarding them
+with the worktree would mean the layer structurally cannot deliver its best
+output. The document is copied to `audit/quarantine/<key>/` in the local-only
+store and the package repository receives nothing. Second, git calls run with
+the audited repository's hooks disarmed — `--no-verify` on the commit, every
+hook-triggering call backgrounded and waited on so the cleanup trap can fire,
+and bounded by `AUDIT_GIT_TIMEOUT`. A worktree shares `.git/hooks` with the
+checkout it came from, so one hanging `pre-commit` would otherwise leave a
+worktree registered in the developer's repository indefinitely, and a
+`pre-commit` that stages files would put unscanned content into the index the
+gates had just cleared.
 
 **A decision recorded here, not re-litigated: the git tool allowlist.**
 `audit_run.sh` narrows the headless agent's Bash allowlist to read-only git
@@ -315,9 +345,23 @@ The Resource Loop records one JSON object per line to a monthly shard at
 (`payload/tools/harvest_metrics.py`) and the PreCompact hook are the only
 writers; everything downstream is a reader.
 
-**`~/.claude/metrics/` is now a standalone nested git repo.** The repo-audit
-scheduling layer's `audit_store.ensure_store()` git-inits the metrics
-directory in place the first time it runs. `assert_no_remote()` is the
+**`~/.claude/metrics/` is now a standalone nested git repo, and only
+`audit/` is tracked in it.** The repo-audit scheduling layer's
+`audit_store.ensure_store()` git-inits the metrics directory in place the
+first time it runs and writes a scoped `.gitignore` — `/*`, then `!/audit/`,
+then `/audit/logs/` back out. That scope is load-bearing: the shards,
+checkpoints, and caches described below are siblings of `audit/`, and an
+empty ignore file (what the first version wrote) would leave every one of
+them untracked-but-not-ignored, one `git add -A` away from being committed
+wholesale. `ensure_store()` rewrites the file whenever its content drifts, so
+a store created by an older version is repaired on the next nightly run.
+`audit_store.commit_paths()` is the only writer of that history — explicit
+paths, never `git add -A`, never a push, and never fatal to its caller — and
+`audit_run.sh` and `audit_digest.write_digest()` both call it immediately
+after writing an artifact. That is what makes "a recoverable, versioned home"
+a fact about the store rather than a claim about it.
+
+`assert_no_remote()` is the
 enforcement point — checked by asking `git remote` directly (failing CLOSED on
 any non-zero exit, since an unverifiable answer is not evidence the invariant
 holds) and by confirming no enclosing repository tracks the path without
@@ -330,10 +374,10 @@ other two audit tools re-verifies it: `audit_digest.py`'s reads
 checked, rather than confirming it again themselves. `~/.claude/metrics` is
 the loop output root for every agent, not only the audit layer: the
 `YYYY-MM.jsonl` shards described below and the audit layer's
-`audit/{runs,findings,digests}` tree are siblings under the same root and now
-share the same local git history, giving every write in either family a
-recoverable, versioned home. Nothing about the shards' own format, writers, or
-"not publishable" contract changes — see below.
+`audit/{runs,findings,digests,quarantine,logs}` tree are siblings under the
+same root. Only the audit tree is tracked, for the reason given above;
+nothing about the shards' own format, writers, or "not publishable" contract
+changes — see below.
 
 | Field | Meaning |
 |---|---|

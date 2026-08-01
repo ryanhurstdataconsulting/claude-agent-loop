@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""audit_dispatch — pure policy: decide which packages are due for a
-repo-security audit tonight.
+"""audit_dispatch — the nightly repo-security-audit sweep: decide, then run.
 
 The scheduling layer runs the existing repo-security-audit agent across many
 packages on a rotating cadence. Something has to decide, every night, which
 of those packages actually need a run — a package on a weekly cadence that
 was audited yesterday should not burn agent turns again, but a package
 nobody has ever gotten to, or one whose HEAD moved after the interval
-elapsed, must not be silently skipped either. This module is that decision
-in isolation: it reads the consolidated store (Task 1's ``audit_store``) and
-each package's git HEAD, and answers "is this due, and why" — nothing more.
+elapsed, must not be silently skipped either. This module owns the whole
+night: it reads the consolidated store (``audit_store``) and each package's
+git HEAD to answer "is this due, and why", then drives the due list through
+``audit_run.sh`` one package at a time and closes with a single
+``audit_digest`` render.
 
-It deliberately stops there. It does not invoke ``claude``, does not create
-worktrees, and does not run any audit itself; that is
-:mod:`audit_run` (a later task). Keeping the decision pure and the execution
-separate means the policy can be unit-tested without ever shelling out to a
-real agent session, and a bug in one never masks a bug in the other.
+The two halves stay strictly separable, which is what keeps them testable.
+The policy half (:func:`is_due`, :func:`select_due`) never shells out to
+anything. The execution half (:func:`run_package`, :func:`run_due`) never
+invokes ``claude`` directly — it invokes ``audit_run.sh``, resolved through
+the ``AUDIT_RUN_BIN`` environment variable exactly as ``audit_run.sh``
+resolves the CLI through ``AUDIT_CLAUDE_BIN``. That indirection is a safety
+control, not a convenience: no test may ever launch a real, billed agent
+session, and an injectable runner is the only way to guarantee it.
 
 Contracts worth stating explicitly, because callers rely on them:
 
@@ -28,8 +32,12 @@ Contracts worth stating explicitly, because callers rely on them:
 * :func:`select_due` never lets one broken package abort the rest of the
   night's selection — a per-package failure becomes a loud due-entry naming
   the error, sorted to the front, rather than a crash or a silent drop.
+* :func:`run_due` holds the same line at execution time: one package that
+  crashes, hangs, or exits non-zero never aborts the rest of the sweep.
 * A tier named exactly ``"excluded"`` is skipped entirely, regardless of its
   ``interval_days`` value.
+* ``--dry-run`` prints exactly what would happen and invokes nothing, so the
+  launchd job can be exercised end to end without spending a cent.
 
 Stdlib only — no third-party imports, so this tool has no install step and
 no supply-chain surface of its own.
@@ -44,10 +52,13 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import audit_digest
 import audit_store
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 EXCLUDED_TIER = "excluded"
+AUDIT_RUN_BIN_ENV = "AUDIT_RUN_BIN"
+NOTIFY_ENV = "AUDIT_NOTIFY"
 
 
 def head_sha(pkg_path):
@@ -75,22 +86,17 @@ def head_sha(pkg_path):
     return sha or None
 
 
-def last_state(root, pkg):
-    """Return the most recently recorded audit state for ``pkg``, or ``{}``.
+def _read_latest_json(run_dir, include):
+    """Parse the lexicographically greatest matching JSON file in ``run_dir``.
 
-    Never raises. Reads ``<root>/audit/runs/<pkg>/*.json`` — one file per
-    run, written by ``audit_run.sh`` with a date-stamped filename (e.g.
-    ``2026-07-31.json``) — and returns the parsed contents of the
-    lexicographically greatest filename, which is also the chronologically
-    latest run since date-stamped names sort as dates. A missing directory,
-    no runs yet, unreadable JSON, or a non-object payload all fall back to
-    ``{}`` — the same "nothing known yet" state :func:`is_due` already
-    treats as never-audited, rather than raising and taking the whole
-    night's selection down over one corrupt file.
+    Never raises: a missing directory, no matching file, unreadable JSON, or
+    a payload that is not an object all return ``{}`` — the same "nothing
+    known yet" answer :func:`is_due` already treats as never-audited, rather
+    than taking the whole night's selection down over one corrupt file.
     """
-    run_dir = pathlib.Path(root) / "audit" / "runs" / pkg
     try:
-        files = sorted(p for p in run_dir.glob("*.json") if p.is_file())
+        files = sorted(p for p in run_dir.glob("*.json")
+                       if p.is_file() and include(p.name))
     except OSError:
         return {}
     if not files:
@@ -100,6 +106,47 @@ def last_state(root, pkg):
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def last_state(root, pkg):
+    """Return the most recently recorded audit state for ``pkg``, or ``{}``.
+
+    ``pkg`` is the package's key in ``config.json``, which is also the store
+    path it is recorded under — and which may be a nested, workspace-relative
+    path such as ``<client-dir>/<package>``. ``audit_run.sh`` is handed the
+    same string with ``--key`` rather than re-deriving one from the package
+    directory's basename, so what is written and what is read here are the
+    same path by construction. They were not always: while the runner derived
+    the key itself, a nested package's state was written one level shallower
+    than this function looked for it, and every such package reported "never
+    audited" every single night.
+
+    Reads ``<root>/audit/runs/<pkg>/*.json``, which holds one date-stamped
+    file per run (``2026-07-31.json``) plus a ``state.json`` marker written
+    on success only. The greatest filename wins. That is ``state.json``
+    whenever one exists — ``s`` sorts above any digit — and that is the
+    intended answer, not an accident of ordering: ``state.json`` is by
+    definition the last SUCCESSFUL run, and a later blocked or failed run
+    must not overwrite the due-check keys with its own. When no successful
+    run has ever happened, the greatest name is the newest date-stamped log,
+    which carries no ``last_audit_date`` and so reads as never audited.
+    """
+    return _read_latest_json(pathlib.Path(root) / "audit" / "runs" / pkg,
+                             lambda name: True)
+
+
+def last_run_record(root, pkg):
+    """Return ``pkg``'s newest dated run log, or ``{}`` — ``state.json`` excluded.
+
+    :func:`last_state` deliberately prefers the ``state.json`` marker because
+    it answers a scheduling question ("when was this last successfully
+    audited"). This answers a reporting one ("what happened on the most
+    recent run, whatever its verdict"), so the marker — which records only
+    successes — would be the wrong file to read. The digest reader applies
+    the same exclusion for the same reason.
+    """
+    return _read_latest_json(pathlib.Path(root) / "audit" / "runs" / pkg,
+                             lambda name: name != "state.json")
 
 
 def _parse_last_audit_date(date_str, now):
@@ -252,6 +299,142 @@ def select_due(root, cfg, workspace, now):
     return entries
 
 
+def audit_run_bin():
+    """Resolve the ``audit_run.sh`` this sweep will invoke.
+
+    ``AUDIT_RUN_BIN`` overrides the sibling lookup, and the override is read
+    with ``os.environ.get`` and NO default so that a variable which is set
+    but EMPTY resolves to the empty string and fails loudly. That is the same
+    rule ``audit_run.sh`` applies to ``AUDIT_CLAUDE_BIN``, and for the same
+    reason: a harness that computes an empty path must not fall through to
+    the real thing and start a live, billed agent session. A prior agent did
+    exactly that; the indirection exists so no test can repeat it.
+    """
+    override = os.environ.get(AUDIT_RUN_BIN_ENV)
+    if override is not None:
+        return override
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "audit_run.sh")
+
+
+def _notify(text):
+    """Fire one macOS notification. Never raises, never fails the sweep.
+
+    Honours ``AUDIT_NOTIFY=0`` the same way ``audit_run.sh`` does, so a test
+    suite or a headless run stays silent.
+    """
+    if os.environ.get(NOTIFY_ENV) == "0":
+        return False
+    if sys.platform != "darwin":
+        return False
+    message = str(text).replace('"', "")
+    try:
+        subprocess.run(
+            ["osascript", "-e",
+             'display notification "%s" with title "claude-agent-loop"' % message],
+            capture_output=True,
+        )
+    except OSError:
+        return False
+    return True
+
+
+def run_package(entry, root, binary=None):
+    """Run one due package's audit. Returns a result dict; never raises.
+
+    Invokes ``audit_run.sh <path> <root> --key <package>``. Passing the key
+    explicitly is what keeps the store path this run WRITES identical to the
+    one :func:`last_state` READS on the next night — see that function.
+
+    ``AUDIT_NOTIFY=0`` is set in the child's environment on purpose. The
+    runner fires its own OS notification for a Critical/High finding, which
+    is right when a human invokes it by hand, but during a sweep the
+    dispatcher does the notifying from the run logs, and one owner per event
+    beats two notifications for it.
+    """
+    package = entry.get("package")
+    result = {
+        "package": package,
+        "path": entry.get("path"),
+        "returncode": None,
+        "stdout": "",
+        "stderr": "",
+        "error": None,
+    }
+
+    try:
+        if not isinstance(package, str) or not package:
+            result["error"] = "package entry is not a usable name: %r" % (package,)
+            return result
+        if not result["path"]:
+            result["error"] = "no resolved package path for %r" % (package,)
+            return result
+
+        runner = binary if binary is not None else audit_run_bin()
+        if not runner:
+            result["error"] = (
+                "%s is set but empty — refusing to guess the runner rather "
+                "than risk starting a real agent session" % AUDIT_RUN_BIN_ENV
+            )
+            return result
+
+        env = dict(os.environ)
+        env[NOTIFY_ENV] = "0"
+        proc = subprocess.run(
+            ["bash", runner, result["path"], str(root), "--key", package],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        result["returncode"] = proc.returncode
+        result["stdout"] = proc.stdout
+        result["stderr"] = proc.stderr
+    except Exception as exc:  # noqa: BLE001 - deliberately broad, see docstring
+        result["error"] = "%s: %s" % (type(exc).__name__, exc)
+    return result
+
+
+def run_due(root, due, binary=None):
+    """Run every due package, SEQUENTIALLY, and return one result per entry.
+
+    Sequential rather than parallel by design: each audit is a full agent
+    session against a real repository, and running several at once would
+    multiply peak cost, contend for the same rate limit, and make the
+    per-package timeout meaningless. Nothing here aborts the batch —
+    :func:`run_package` converts every failure into a result entry, so one
+    package that crashes or hangs costs exactly itself and the rest of the
+    night still runs.
+    """
+    return [run_package(entry, root, binary) for entry in due]
+
+
+def collect_alerts(root, due, since):
+    """Return the alert lines for runs recorded after ``since``, one per package.
+
+    Reads what each run actually WROTE rather than trusting its exit status:
+    a run log is the record the digest and the next night's due check both
+    use, so an alert derived from anything else could disagree with them. A
+    package whose newest run log predates this sweep produced no record at
+    all tonight, which is itself alert-worthy — that is a lost run, not a
+    quiet one.
+    """
+    alerts = []
+    for entry in due:
+        package = entry.get("package")
+        if not isinstance(package, str) or not package:
+            continue
+        record = last_run_record(root, package)
+        if not record or (record.get("run_at") or "") < since:
+            alerts.append(
+                "audit: %s — the run left no log for tonight; its outcome is "
+                "unknown and its scheduler state was not recorded" % package)
+            continue
+        text = audit_digest.severity_alert(record)
+        if text:
+            alerts.append(text)
+    return alerts
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -268,23 +451,78 @@ def main(argv=None):
         "--json",
         action="store_true",
         dest="as_json",
-        help="print the full due-list as JSON instead of one line per package",
+        help="print the whole night as one JSON object instead of plain lines",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print tonight's due list and the exact command each package "
+             "would get, then stop — nothing is invoked and nothing is spent",
+    )
+    parser.add_argument(
+        "--audit-run-bin",
+        default=None,
+        help="path to audit_run.sh (default: the AUDIT_RUN_BIN environment "
+             "variable, else the copy beside this script)",
     )
     args = parser.parse_args(argv)
     root = args.root or audit_store.store_root()
 
+    # Reconcile the layout before anything reads or writes it. This is what
+    # repairs a store created by an earlier version, whose `.gitignore` was
+    # empty and therefore left every sibling of `audit/` merely untracked.
+    audit_store.ensure_store(root)
     audit_store.assert_no_remote(root)
     cfg = audit_store.load_config(root)
     now = datetime.datetime.now(datetime.timezone.utc)
+    since = now.strftime(DATE_FORMAT)
     due = select_due(root, cfg, args.workspace, now)
+    runner = args.audit_run_bin if args.audit_run_bin is not None else audit_run_bin()
 
-    if args.as_json:
-        print(json.dumps(due, sort_keys=True))
-    elif not due:
-        print("nothing due")
-    else:
+    if args.dry_run:
+        if args.as_json:
+            print(json.dumps({"dry_run": True, "due": due, "runner": runner},
+                             sort_keys=True))
+            return 0
+        print("audit_dispatch: dry run — nothing was invoked")
+        if not due:
+            print("nothing due")
         for entry in due:
             print("%s — %s" % (entry["package"], entry["reason"]))
+            print("  would run: bash %s %s %s --key %s"
+                  % (runner, entry["path"], root, entry["package"]))
+        return 0
+
+    if not due:
+        # No digest on an empty night: writing one would advance the render
+        # window and fire the SessionStart nudge for a file with nothing in it.
+        if args.as_json:
+            print(json.dumps({"dry_run": False, "due": [], "results": [],
+                              "alerts": [], "digest": None}, sort_keys=True))
+        else:
+            print("nothing due")
+        return 0
+
+    results = run_due(root, due, runner)
+    digest_path = audit_digest.write_digest(root)
+    alerts = collect_alerts(root, due, since)
+    for line in alerts:
+        _notify(line)
+
+    if args.as_json:
+        print(json.dumps({"dry_run": False, "due": due, "results": results,
+                          "alerts": alerts, "digest": digest_path},
+                         sort_keys=True))
+        return 0
+
+    for entry in due:
+        print("%s — %s" % (entry["package"], entry["reason"]))
+    for result in results:
+        outcome = result["error"] or ("exit %s" % result["returncode"])
+        print("ran %s — %s" % (result["package"], outcome))
+    for line in alerts:
+        print(line)
+    print("digest: %s" % digest_path)
     return 0
 
 

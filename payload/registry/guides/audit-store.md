@@ -10,16 +10,19 @@ agent across many packages on a rotating cadence, and every one of those runs
 needs one durable, local place to land — otherwise each invocation's findings
 live only in that session's transcript, with nothing for the next night's
 dispatch to diff against. `audit_store` is that place: a small directory tree,
-`~/.claude/metrics/audit/{runs,findings,digests}`, under its own git history so
-every run is versioned and recoverable, with a hard no-remote invariant this
-module enforces rather than merely documents — the store holds per-client
-package names and audit findings that must never leave this machine.
+`~/.claude/metrics/audit/{runs,findings,digests,quarantine,logs}`, under its own
+git history so every run is versioned and recoverable, with a hard no-remote
+invariant this module enforces rather than merely documents — the store holds
+per-client package names and audit findings that must never leave this machine.
 
 ## When to deploy (triggers)
 - Every night, before `audit_dispatch.py` reads `audit/config.json` —
   `ensure_store()` and `assert_no_remote()` are guard rails the rest of the
   scheduling layer calls through, not something invoked standalone in normal
   operation.
+- After every artifact write, through `commit_paths()` — `audit_run.sh` for a
+  run log or a quarantined findings document, `audit_digest.write_digest()`
+  for a digest.
 - Manually, to inspect or validate the store: `python3 audit_store.py check`
   prints the loaded tier config and raises if the no-remote invariant is
   violated.
@@ -28,6 +31,7 @@ package names and audit findings that must never leave this machine.
 ```
 audit_store.py ensure [--root DIR]   # create the layout + git-init if needed (idempotent)
 audit_store.py check [--root DIR]    # assert_no_remote(), then print config.json
+audit_store.py [--root DIR] --message MSG commit PATH...   # stage + commit artifacts
 ```
 `--root` defaults to `store_root()`, `~/.claude/metrics`. Every function takes
 an explicit `root` argument rather than calling `store_root()` itself, so
@@ -36,14 +40,37 @@ deliberate caller. `assert_no_remote()` fails CLOSED: an unreadable `git
 remote` result (non-zero exit, corrupted config) is treated as a violation,
 not a pass — an unverified answer is not evidence the invariant holds.
 
+**The `.gitignore` is deliberately narrow, and that matters more than it
+looks.** The store root IS the metrics tree: the resource loop's monthly
+JSONL shards, budget checkpoints, and caches are all siblings of `audit/`.
+The first version of this module wrote an EMPTY ignore file, which left every
+one of those untracked-but-not-ignored — so a single `git add -A` run in that
+directory by a human or an agent would have swept the whole ~2.5 MB tree into
+a commit. Only `audit/` is tracked now (`audit/logs/` excluded again beneath
+it), and `ensure_store()` rewrites the file whenever its content drifts, so a
+store created by an older version is repaired on the next nightly run.
+
+`commit_paths()` is the only writer of that history. It stages explicit paths
+and never `git add -A`; it drops any path outside the store or missing from
+disk; it never pushes, because the store has no remote and must never gain
+one; and it never raises. A failed bookkeeping commit returns `None` and the
+caller carries on — the artifact is already on disk, and a missed commit is a
+far smaller problem than a nightly sweep that aborts over one.
+
 ## Composition (pairs with / hands off to)
-- `audit_dispatch.py` imports this module directly for `store_root()`,
-  `assert_no_remote()`, and `load_config()` before computing tonight's due
-  list.
+- `audit_dispatch.py` imports this module directly for `ensure_store()`,
+  `store_root()`, `assert_no_remote()`, and `load_config()` before computing
+  tonight's due list.
 - `audit_run.sh` writes its per-run JSON under the layout this module
-  creates.
-- `audit_digest.py` reads the same `audit/runs/` tree and writes
-  `audit/digests/`.
+  creates, quarantines a findings document into `audit/quarantine/<key>/`
+  when the secret gate refuses it, and commits both through the `commit`
+  action.
+- `audit_digest.py` reads the same `audit/runs/` tree, writes
+  `audit/digests/`, and commits the result through `commit_paths()`.
+- `audit/logs/` holds the launchd job's stdout and stderr. The nightly
+  dispatch log names client packages one per due line, so it lives here
+  rather than in world-readable `/tmp` — deliberately unlike the `usage-poll`
+  job, whose log carries only anonymous quota numbers.
 - Shares that no-remote posture with the metrics-store contract in
   `ARCHITECTURE.md` — the nested repo this module manages is the same
   `~/.claude/metrics` tree the resource loop's `YYYY-MM.jsonl` shards already

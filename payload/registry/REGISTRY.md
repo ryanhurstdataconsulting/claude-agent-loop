@@ -48,7 +48,7 @@
 | background-build-watch | tool | Any long-running build the agent must poll — tail a log for success/fail, notify once, no manual re-arm |
 | ssh-tunnel-keepalive | tool | Any remote-DB or SSH-tunnel session spanning multiple turns or >30 min — keepalive + auto-reconnect on idle drop |
 | dev-server-orchestration | tool | "Spin it up" / "let me test" — one command brings the project's dev stack up/down with a health gate |
-| audit-store | tool | Ensure/verify the repo-audit output store — a nested git repo under `~/.claude/metrics/audit`, no remote, ever |
-| audit-dispatch | tool | Nightly: decide which packages are due for a repo-security audit — tier interval elapsed AND HEAD moved |
+| audit-store | tool | Ensure/verify/commit the repo-audit output store — a nested git repo under `~/.claude/metrics/audit`, no remote, ever |
+| audit-dispatch | tool | Nightly repo-security sweep: pick the due packages (interval elapsed AND HEAD moved), run each one, close with a digest |
 | audit-run | tool | Run one unattended repo-security audit — throwaway worktree, safety gates, commit to `audit/security-<date>`, never pushes |
 | audit-digest | tool | Severity-gated repo-audit alerts (Critical/High interrupt now) plus the batched digest and its SessionStart nudge |
