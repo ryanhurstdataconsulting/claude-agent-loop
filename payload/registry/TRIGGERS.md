@@ -42,6 +42,17 @@
 | architecture diagram · data-flow diagram · onboarding map · `*.excalidraw` | excalidraw-diagram |
 | explain how this works · walk me through the code · teach this module | explain-code |
 
+## Offensive security & penetration testing
+
+| Trigger | Route to |
+|---|---|
+| penetration test · pentest · security assessment · red-team · "test our attack surface" | pentest, security-engineer (role) |
+| reconnaissance · attack surface · subdomain / port / service enumeration | pentest, domain-assessment, web-application-mapping |
+| XSS · SQLi · SSRF · CSRF · SSTI · IDOR · prototype pollution · injection testing | pentest, common-appsec-patterns |
+| CVE research · known-vuln PoC · exploit a target | pentest, cve-testing |
+| login / signup / 2FA / OTP / OAuth / CAPTCHA testing · session security | authenticating |
+| `/pentest:pentest` launch · Kali / Metasploit tool server · MKS | pentest, mks |
+
 ## Cloud & infrastructure
 
 | Trigger | Route to |

@@ -18,6 +18,7 @@
 | excalidraw-diagram | skill | Architecture, data-flow, and onboarding diagrams as Excalidraw JSON |
 | document-render | skill | Rendering any markdown deliverable to PDF, or a generated .pptx/.docx deck to PDF/images for QA (pandoc+weasyprint + headless-LibreOffice) |
 | tauri-desktop-dev | skill | Building/debugging a Tauri 2 desktop app or packaging a Python/FastAPI backend as a Tauri sidecar |
+| pentest | skill | Authorized penetration testing / security assessment — recon → attack-surface → executor fan-out → report, 63 attack categories. Authorization-gated; full engagements run from the main session via /pentest:pentest (routed through the security-engineer role) |
 | skill-library | skill | Role-based skill library — 157 generic skills across 33 tech-org families (product → DB → ML/AI → UI). Browse skills/CATALOG.md, then invoke a specific skill by name |
 
 ## Agents

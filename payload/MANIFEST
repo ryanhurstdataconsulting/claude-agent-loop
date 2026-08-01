@@ -273,7 +273,7 @@ link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
 # --- templates/ (copied into a target repo by hand, never auto-installed) ----
 link-dir templates
 
-# --- registry/guides/ (38 guides + template) --------------------------------
+# --- registry/guides/ (39 guides + template) --------------------------------
 link-file registry/guides/_TEMPLATE.md
 link-file registry/guides/assess-task.md
 link-file registry/guides/audit-digest.md
@@ -298,6 +298,7 @@ link-file registry/guides/lint-roles.md
 link-file registry/guides/loop-contribute.md
 link-file registry/guides/machine-prose-grammar-gate.md
 link-file registry/guides/make-brief.md
+link-file registry/guides/pentest.md
 link-file registry/guides/plan-task.md
 link-file registry/guides/playwright.md
 link-file registry/guides/postgres-readonly.md
