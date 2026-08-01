@@ -336,7 +336,20 @@ PY
 # registration — so a failure of any one of them still leaves nothing behind,
 # and none of the three can reach a worktree that is not ours.
 TMPROOT="$(mktemp -d)"
-WT="$TMPROOT/audit-$PKG_NAME-$DATE"
+# The worktree DIRECTORY name has to be unique per run, not merely per package
+# and date. Two runs against the same package on the same day get different
+# temp roots but would otherwise land on an identical basename, and the
+# name-matched cleanup below would then let one run drop the other's live
+# registration — worse than the `git worktree prune` it replaced, which never
+# touched a registration whose directory still existed. `mktemp -d` has already
+# handed us a token that is unique by construction, so reuse it rather than
+# inventing a second source of uniqueness.
+#
+# The BRANCH name is deliberately left alone: `audit/security-<date>` is what
+# makes the output findable and reviewable by a human afterwards, and it lives
+# in the package repo where no two runs share it.
+WT_TAG="$(basename "$TMPROOT")"
+WT="$TMPROOT/audit-$PKG_NAME-$DATE-$WT_TAG"
 CLI_OUT="$TMPROOT/cli-output.json"
 CLI_ERR="$TMPROOT/cli-error.log"
 _CLEANUP_DONE=0
@@ -349,8 +362,15 @@ _CLEANUP_DONE=0
 # developer keeps on a volume that happens to be unmounted tonight. Deleting
 # that is precisely the kind of damage this whole task exists to prevent. So
 # the match is by name — the registration whose recorded path ends in our own
-# `audit-<pkg>-<date>` directory — and a registration belonging to anyone else
-# is left untouched however stale it looks.
+# `audit-<pkg>-<date>-<tag>` directory, where the tag makes the name unique to
+# this run — and a registration belonging to anyone else is left untouched
+# however stale it looks.
+#
+# A missing directory is deliberately NOT the matching criterion, because that
+# is exactly what an unmounted volume looks like. It is used only as a second
+# gate underneath the name: a registration whose directory is still present is
+# a live worktree, not a stale one, and `git worktree prune` would not have
+# removed it either.
 _drop_own_registration() {
   common_dir="$(git -C "$PKG" rev-parse --git-common-dir 2>/dev/null)"
   [ -n "$common_dir" ] || return 0
@@ -366,6 +386,8 @@ _drop_own_registration() {
     [ -n "$recorded" ] || continue
     # `gitdir` holds "<worktree path>/.git" — compare the worktree's own name.
     [ "$(basename "$(dirname "$recorded")")" = "$wt_name" ] || continue
+    # Never unregister a worktree whose directory is still there.
+    [ -d "$(dirname "$recorded")" ] && continue
     rm -rf "$admin" >/dev/null 2>&1
   done
   return 0

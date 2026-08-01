@@ -169,5 +169,40 @@ AUDIT_CLAUDE_BIN="" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
 [ $? -eq 4 ] && pass "13 empty AUDIT_CLAUDE_BIN exits 4" \
   || die "13 empty override fell through to the real claude"
 
+# 14. Two runs against the same package on the same date must not collide. The
+# worktree directory name carries a per-run tag, so one run's fallback cleanup
+# cannot drop a concurrent run's registration.
+#
+# The decoy below is named exactly as an UNDISAMBIGUATED run would name its
+# worktree, and its directory is deleted first, so the per-run tag is the only
+# thing standing between it and our cleanup — which is what makes this case
+# fail if the tag is ever dropped.
+DECOY="$TMP/concurrent/audit-pkg-$(date +%F)"
+mkdir -p "$TMP/concurrent"
+git -C "$PKG" worktree add -q --detach "$DECOY" HEAD 2>/dev/null
+rm -rf "$DECOY"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
+git -C "$PKG" worktree list | grep -q "concurrent/audit-pkg-" \
+  && pass "14 a same-name concurrent registration survives" \
+  || die "14 cleanup dropped a concurrent run's registration"
+
+# 14b. The same, but with the concurrent worktree still LIVE on disk — the
+# reviewer's reproduction. A registration whose directory is present is never
+# stale, whatever it is called.
+LIVE="$TMP/live/audit-pkg-$(date +%F)"
+mkdir -p "$TMP/live"
+git -C "$PKG" worktree add -q --detach "$LIVE" HEAD 2>/dev/null
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
+git -C "$PKG" worktree list | grep -q "live/audit-pkg-" \
+  && pass "14b a live concurrent registration survives" \
+  || die "14b cleanup dropped a live concurrent worktree"
+[ -d "$LIVE" ] && pass "14c the live concurrent worktree is still on disk" \
+  || die "14c live concurrent worktree deleted from disk"
+git -C "$PKG" worktree list | grep -q "audit-pkg-$(date +%F)-" \
+  && die "14d our own worktree was left registered" \
+  || pass "14d our own worktree still removed"
+
 [ $fail -eq 0 ] && { echo "test_audit_run: PASS"; exit 0; }
 echo "test_audit_run: FAIL"; exit 1
