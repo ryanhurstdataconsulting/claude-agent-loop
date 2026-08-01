@@ -76,6 +76,7 @@ usage_err() {
 # --- OS notification (Darwin + osascript only; never fails the run) -----------
 _notify() {
   msg="$(printf '%s' "$1" | tr -d '"')"
+  [ "${AUDIT_NOTIFY:-1}" = "0" ] && return 0
   [ "$(uname 2>/dev/null)" = "Darwin" ] || return 0
   command -v osascript >/dev/null 2>&1 || return 0
   osascript -e "display notification \"$msg\" with title \"claude-agent-loop\"" \
@@ -126,7 +127,10 @@ RUN_DIR="$STORE/audit/runs/$PKG_NAME"
 # Resolved through AUDIT_CLAUDE_BIN so tests can inject a stub; never call
 # `claude` directly. A missing CLI is exit 4 and nothing else happens — no
 # worktree, no temp directory, no run log.
-CLAUDE_BIN="${AUDIT_CLAUDE_BIN:-$(command -v claude)}"
+# `${VAR-default}`, not `${VAR:-default}`: an override that is set but EMPTY
+# must fail, not fall through to the real CLI. A harness that computes an empty
+# path would otherwise launch a live, billed session in place of its stub.
+CLAUDE_BIN="${AUDIT_CLAUDE_BIN-$(command -v claude)}"
 if [ -z "$CLAUDE_BIN" ] || [ ! -x "$CLAUDE_BIN" ]; then
   echo "audit_run: claude CLI not found or not executable: ${CLAUDE_BIN:-<unset>}" >&2
   exit 4
@@ -328,20 +332,51 @@ PY
 # The trap is registered BEFORE `worktree add`. An interrupt landing between
 # the two would otherwise leave a worktree registered against the developer's
 # repository with nothing to clean it up. Removal is belt-and-braces: the
-# proper `worktree remove`, then `rm -rf`, then `prune` — so a failure of any
-# one of them still leaves no registration behind.
+# proper `worktree remove`, then `rm -rf`, then a name-matched drop of our own
+# registration — so a failure of any one of them still leaves nothing behind,
+# and none of the three can reach a worktree that is not ours.
 TMPROOT="$(mktemp -d)"
 WT="$TMPROOT/audit-$PKG_NAME-$DATE"
 CLI_OUT="$TMPROOT/cli-output.json"
 CLI_ERR="$TMPROOT/cli-error.log"
 _CLEANUP_DONE=0
 
+# Drop the administrative registration for OUR worktree and nothing else.
+#
+# `git worktree prune` would be simpler and is what the obvious version of this
+# script reaches for, but it is repo-GLOBAL: it drops every registration whose
+# directory is currently missing, which includes an unlocked worktree the
+# developer keeps on a volume that happens to be unmounted tonight. Deleting
+# that is precisely the kind of damage this whole task exists to prevent. So
+# the match is by name — the registration whose recorded path ends in our own
+# `audit-<pkg>-<date>` directory — and a registration belonging to anyone else
+# is left untouched however stale it looks.
+_drop_own_registration() {
+  common_dir="$(git -C "$PKG" rev-parse --git-common-dir 2>/dev/null)"
+  [ -n "$common_dir" ] || return 0
+  case "$common_dir" in
+    /*) ;;
+    *) common_dir="$PKG/$common_dir" ;;
+  esac
+  wt_name="$(basename "$WT")"
+  for admin in "$common_dir"/worktrees/*; do
+    [ -d "$admin" ] || continue
+    [ -f "$admin/gitdir" ] || continue
+    recorded="$(cat "$admin/gitdir" 2>/dev/null)"
+    [ -n "$recorded" ] || continue
+    # `gitdir` holds "<worktree path>/.git" — compare the worktree's own name.
+    [ "$(basename "$(dirname "$recorded")")" = "$wt_name" ] || continue
+    rm -rf "$admin" >/dev/null 2>&1
+  done
+  return 0
+}
+
 _cleanup() {
   [ "$_CLEANUP_DONE" -eq 1 ] && return 0
   _CLEANUP_DONE=1
   git -C "$PKG" worktree remove --force "$WT" >/dev/null 2>&1
   rm -rf "$WT" >/dev/null 2>&1
-  git -C "$PKG" worktree prune >/dev/null 2>&1
+  _drop_own_registration
   rm -rf "$TMPROOT" >/dev/null 2>&1
   return 0
 }
@@ -386,13 +421,22 @@ whatever you leave in the working tree, after its own safety gates run.
 End your run with a JSON object carrying a \"findings\" object whose keys are
 critical, high, medium, and low, each an integer count."
 
+# The git allowlist names read-only subcommands one at a time. A blanket
+# `Bash(git:*)` would be a hole straight through this script's isolation:
+# --add-dir constrains the file tools, not Bash, and the live repository path
+# is one `git rev-parse --git-common-dir` away from inside the worktree — so
+# the agent could check out, reset, or push in the developer's checkout, with
+# nothing but prompt text discouraging it. Prompt text is not a control for an
+# unattended auditor reading potentially adversarial repository content.
 set -- \
   -p "$PROMPT" \
   --agent repo-security-auditor \
   --add-dir "$WT" \
   --allowedTools Read Grep Glob Edit Write \
                  'Bash(pip-audit:*)' 'Bash(npm audit:*)' \
-                 'Bash(gitleaks:*)' 'Bash(semgrep:*)' 'Bash(git:*)' \
+                 'Bash(gitleaks:*)' 'Bash(semgrep:*)' \
+                 'Bash(git log:*)' 'Bash(git diff:*)' 'Bash(git ls-files:*)' \
+                 'Bash(git status:*)' 'Bash(git rev-parse:*)' \
   --permission-mode acceptEdits \
   --output-format json \
   --max-turns "$MAX_TURNS"
@@ -434,8 +478,53 @@ GATE_FINDINGS_FILE="$TMPROOT/gate-findings.log"
 : > "$GATE_FINDINGS_FILE"
 SECRET_LOG="$TMPROOT/gate-secret.log"
 PROSE_LOG="$TMPROOT/gate-prose.log"
+CHANGED_PATHS="$TMPROOT/changed-paths.z"
 
-python3 "$GATE_DIR/secret_pii_scrub_gate.py" "$AUDIT_FILE" >"$SECRET_LOG" 2>&1
+# Enumerate what the agent touched ONCE, before the branch exists, and use that
+# one list for both gating and staging. Enumerating twice would let the two
+# drift, and the gap between them is where an ungated file reaches a commit.
+# NUL-delimited so a path holding a space or a newline survives.
+_enumerate_changed_paths() {
+  : > "$CHANGED_PATHS"
+  while IFS= read -r -d '' entry; do
+    code="${entry:0:2}"
+    path="${entry:3}"
+    case "$code" in
+      R*|C*)
+        # A rename/copy record carries the source path in the next field; both
+        # sides belong in the commit.
+        if IFS= read -r -d '' origin; then
+          [ -n "$origin" ] && printf '%s\0' "$origin" >> "$CHANGED_PATHS"
+        fi
+        ;;
+    esac
+    [ -n "$path" ] || continue
+    case "$path" in
+      .git/*) continue ;;
+    esac
+    printf '%s\0' "$path" >> "$CHANGED_PATHS"
+  done < <(git -C "$WT" status --porcelain -z --untracked-files=all)
+}
+
+_enumerate_changed_paths
+
+# The secret gate covers EVERY path that will be staged, not just the findings
+# document. The auditor applies its own pre-approved low-risk fixes, and a
+# credential introduced by one of those would otherwise ride into the commit
+# completely unscanned. The grammar gate stays on the Markdown alone — it
+# reasons about prose, and source files are not prose.
+#
+# The audit file leads the list explicitly: when a re-audit rewrites it
+# byte-identically it does not appear in `status` at all, and an empty argument
+# list would silently turn the gate into a scan of the staging area of whatever
+# directory this script happens to be running in.
+set -- "$AUDIT_FILE"
+while IFS= read -r -d '' rel; do
+  [ "$rel" = "SECURITY_AUDIT.md" ] && continue
+  set -- "$@" "$WT/$rel"
+done < "$CHANGED_PATHS"
+
+python3 "$GATE_DIR/secret_pii_scrub_gate.py" "$@" >"$SECRET_LOG" 2>&1
 SECRET_RC=$?
 python3 "$GATE_DIR/prose_grammar_gate.py" "$AUDIT_FILE" >"$PROSE_LOG" 2>&1
 PROSE_RC=$?
@@ -454,10 +543,10 @@ if [ "$SECRET_RC" -ne 0 ] || [ "$PROSE_RC" -ne 0 ]; then
     [ -n "$BLOCKED_BY" ] && BLOCKED_BY="$BLOCKED_BY and "
     BLOCKED_BY="${BLOCKED_BY}prose_grammar_gate"
   fi
-  echo "audit_run: blocked — $BLOCKED_BY refused SECURITY_AUDIT.md" >&2
+  echo "audit_run: blocked — $BLOCKED_BY refused the audit output" >&2
   cat "$GATE_FINDINGS_FILE" >&2
-  _write_run_log "blocked" "" "" "$BLOCKED_BY refused SECURITY_AUDIT.md" >/dev/null
-  _notify "audit blocked: $PKG_NAME — $BLOCKED_BY refused SECURITY_AUDIT.md"
+  _write_run_log "blocked" "" "" "$BLOCKED_BY refused the audit output" >/dev/null
+  _notify "audit blocked: $PKG_NAME — $BLOCKED_BY refused the audit output"
   exit 3
 fi
 
@@ -465,28 +554,13 @@ fi
 git -C "$WT" checkout -q -b "$BRANCH" 2>"$TMPROOT/branch.err" \
   || _fail_run "could not create $BRANCH: $(tr '\n' ' ' < "$TMPROOT/branch.err")"
 
-# Explicit paths only, never `git add -A`: SECURITY_AUDIT.md plus each file the
-# agent actually touched, named one at a time. NUL-delimited so a path with a
-# space or a newline survives.
+# Explicit paths only, never `git add -A`, and every one of them came from the
+# list the secret gate just cleared — nothing reaches the index that was not
+# scanned.
 git -C "$WT" add -- "SECURITY_AUDIT.md" 2>/dev/null
-while IFS= read -r -d '' entry; do
-  code="${entry:0:2}"
-  path="${entry:3}"
-  case "$code" in
-    R*|C*)
-      # A rename/copy record carries the source path in the next field; stage
-      # both sides so the commit is complete.
-      if IFS= read -r -d '' origin; then
-        [ -n "$origin" ] && git -C "$WT" add -- "$origin" 2>/dev/null
-      fi
-      ;;
-  esac
-  [ -n "$path" ] || continue
-  case "$path" in
-    .git/*) continue ;;
-  esac
-  git -C "$WT" add -- "$path" 2>/dev/null
-done < <(git -C "$WT" status --porcelain -z --untracked-files=all)
+while IFS= read -r -d '' rel; do
+  git -C "$WT" add -- "$rel" 2>/dev/null
+done < "$CHANGED_PATHS"
 
 if git -C "$WT" diff --cached --quiet; then
   # Nothing changed — a re-audit that found exactly what the last one did.

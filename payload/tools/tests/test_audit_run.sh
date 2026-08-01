@@ -12,6 +12,9 @@
 # macOS bash-3.2 portable. Hermetic: every repo and store lives under one
 # mktemp -d that a trap removes.
 set -u
+# Silence the OS notification the gate-abort and severity paths would otherwise
+# fire on a developer's desktop every time the suite runs.
+export AUDIT_NOTIFY=0
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$(cd "$HERE/.." && pwd)/audit_run.sh"
 fail=0
@@ -106,12 +109,65 @@ done
 [ -n "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ] \
   && pass "10 worktree registered while the session runs" \
   || die "10 worktree never appeared (case cannot prove anything)"
+# Bounded, and the bound is the point. The stub sleeps 30s, so an unbounded
+# check would also pass against a foreground CLI call — the run would just be
+# cleaned up when the session ended on its own, 30 seconds later. Signal
+# deferral is the defect this case exists to catch, so cleanup gets 5 seconds.
 kill -TERM "$runner" 2>/dev/null
-wait "$runner" 2>/dev/null
+i=0
+while [ $i -lt 50 ] && [ -n "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ]; do
+  sleep 0.1; i=$((i + 1))
+done
 [ -z "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ] \
-  && pass "10b interrupted run leaves no worktree" || die "10b stale worktree after TERM"
+  && pass "10b interrupted run leaves no worktree (cleaned up in $((i + 1)) polls of 0.1s, deadline 50)" \
+  || die "10b worktree still registered 5s after TERM — signal deferred?"
+# Never let a failing mutant hang the suite on the stub's remaining sleep.
+kill -KILL "$runner" 2>/dev/null
+wait "$runner" 2>/dev/null
 [ "$(git -C "$PKG" branch --show-current)" = "$BEFORE_BRANCH" ] \
   && pass "10c interrupted run left the live branch alone" || die "10c branch changed"
+
+# 11. Cleanup reaches OUR worktree and nothing else. A developer's unrelated
+# worktree whose directory is currently missing — an unmounted volume looks
+# exactly like this — must survive the run. A repo-global `git worktree prune`
+# would silently drop it.
+OTHER="$TMP/other-worktree"
+git -C "$PKG" worktree add -q --detach "$OTHER" HEAD 2>/dev/null
+rm -rf "$OTHER"   # the volume goes away; the registration stays behind
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
+git -C "$PKG" worktree list | grep -q "other-worktree" \
+  && pass "11 unrelated worktree registration survives" \
+  || die "11 cleanup pruned a worktree that was not ours"
+git -C "$PKG" worktree list | grep -q "audit-pkg-" \
+  && die "11b our own worktree was left registered" \
+  || pass "11b our own worktree still removed"
+git -C "$PKG" worktree remove --force "$OTHER" >/dev/null 2>&1
+git -C "$PKG" worktree prune >/dev/null 2>&1
+
+# 12. The secret gate covers every file the agent touched, not just the
+# findings document — a credential in an auto-applied "low-risk fix" must
+# block the commit too.
+STUB5="$TMP/claude-leaky-fix"; cat > "$STUB5" <<'EOS'
+#!/bin/bash
+wt=""; while [ $# -gt 0 ]; do [ "$1" = "--add-dir" ] && wt="$2"; shift; done
+printf '# Security Audit\n\nNo findings.\n' > "$wt/SECURITY_AUDIT.md"
+printf 'client = boto3.client(key="AKIAIOSFODNN7EXAMPLE")\n' >> "$wt/app.py"
+echo '{"result":"ok","findings":{"critical":0,"high":0,"medium":0,"low":0}}'
+EOS
+chmod +x "$STUB5"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB5" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
+[ $? -eq 3 ] && pass "12 secret in an agent-modified file aborts (exit 3)" \
+  || die "12 ungated file reached the commit"
+git -C "$PKG" rev-parse --verify "audit/security-$(date +%F)" >/dev/null 2>&1 \
+  && die "12b aborted run still left a branch" || pass "12b no branch after abort"
+
+# 13. An override that is set but EMPTY must fail, never fall through to the
+# real CLI and launch a live, billed session.
+AUDIT_CLAUDE_BIN="" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
+[ $? -eq 4 ] && pass "13 empty AUDIT_CLAUDE_BIN exits 4" \
+  || die "13 empty override fell through to the real claude"
 
 [ $fail -eq 0 ] && { echo "test_audit_run: PASS"; exit 0; }
 echo "test_audit_run: FAIL"; exit 1
