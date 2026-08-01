@@ -301,5 +301,78 @@ bash "$SCRIPT" "$PKG" "$STORE" --key "/etc/passwd" >/dev/null 2>&1
 bash "$SCRIPT" "$PKG" "$STORE" --key "../escape" >/dev/null 2>&1
 [ $? -eq 2 ] && pass "18b a traversing --key is refused" || die "18b '..' key accepted"
 
+# --- post-checkout, the hook case 16 does not reach ---------------------------
+# Case 16 covers pre-commit, which `--no-verify` suppresses. post-checkout
+# obeys no such flag, and `worktree add` fires it in the audited repository
+# before this script has run a single line of its own inside the worktree.
+# Cases 19 and 20 below are the two halves of that hazard.
+#
+# The decoy registrations cases 11 and 14 deliberately left behind are cleared
+# first, so `worktree list` minus the live checkout names our worktree and
+# nothing else — the same idiom case 10 uses.
+git -C "$PKG" worktree remove --force "$LIVE" >/dev/null 2>&1
+git -C "$PKG" worktree prune >/dev/null 2>&1
+mkdir -p "$PKG/.git/hooks"
+
+# 19. The audited repository's post-checkout hook must never execute. It runs
+# unattended, at 03:17, against a repository whose hooks this framework
+# neither wrote nor reviewed — one that prompts, rewrites files, or calls out
+# to the network is a real thing to find in a client checkout.
+CO_MARK="$TMP/post-checkout-ran"
+cat > "$PKG/.git/hooks/post-checkout" <<EOS
+#!/bin/bash
+touch "$CO_MARK"
+exit 0
+EOS
+chmod +x "$PKG/.git/hooks/post-checkout"
+rm -f "$CO_MARK"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" --key post-checkout-case \
+  >/dev/null 2>&1
+rc=$?
+[ $rc -eq 0 ] && pass "19 the run succeeds with a post-checkout hook installed" \
+  || die "19 a post-checkout hook broke the run (exit $rc)"
+[ -f "$CO_MARK" ] && die "19b the audited repo's post-checkout hook executed" \
+  || pass "19b the post-checkout hook never executed"
+
+# 20. Interrupt safety while the hook itself is what is slow. Case 10 proves
+# the trap fires during the agent SESSION; this proves it fires during
+# `worktree add`, which was the one hook-firing git call left running in the
+# foreground. bash defers a trapped signal until the current foreground
+# command returns, so a hanging post-checkout made the whole run
+# un-interruptible and a TERM left our worktree registered in the developer's
+# live repository — the exact damage the trap exists to prevent.
+cat > "$PKG/.git/hooks/post-checkout" <<'EOS'
+#!/bin/bash
+sleep 20
+EOS
+chmod +x "$PKG/.git/hooks/post-checkout"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB3" bash "$SCRIPT" "$PKG" "$STORE" --key hanging-hook-case \
+  >/dev/null 2>&1 &
+runner=$!
+i=0
+while [ $i -lt 100 ] && [ -z "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ]; do
+  sleep 0.1; i=$((i + 1))
+done
+[ -n "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ] \
+  && pass "20 worktree registered while the hanging hook case runs" \
+  || die "20 worktree never appeared (case cannot prove anything)"
+kill -TERM "$runner" 2>/dev/null
+i=0
+while [ $i -lt 50 ] && [ -n "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ]; do
+  sleep 0.1; i=$((i + 1))
+done
+[ -z "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ] \
+  && pass "20b TERM during a hanging post-checkout still cleans up (cleaned up in $((i + 1)) polls of 0.1s, deadline 50)" \
+  || die "20b worktree still registered 5s after TERM — the hook deferred the signal"
+kill -KILL "$runner" 2>/dev/null
+wait "$runner" 2>/dev/null
+[ "$(git -C "$PKG" branch --show-current)" = "$BEFORE_BRANCH" ] \
+  && pass "20c the live branch survived the hanging-hook interrupt" \
+  || die "20c branch changed"
+rm -f "$PKG/.git/hooks/post-checkout"
+git -C "$PKG" worktree prune >/dev/null 2>&1
+
 [ $fail -eq 0 ] && { echo "test_audit_run: PASS"; exit 0; }
 echo "test_audit_run: FAIL"; exit 1

@@ -505,35 +505,62 @@ _cleanup_signal() {
 
 # --- git calls that can execute the AUDITED repository's hooks ----------------
 # A worktree shares `.git/hooks` with the checkout it was created from, so
-# `checkout` and `commit` here run whatever hooks the audited repository
-# happens to ship — unattended, at 03:17, in a script whose entire purpose is
-# to leave that repository undisturbed. Three defences, all needed:
+# `worktree add`, `checkout`, `add`, `commit`, and `branch -D` here all run
+# whatever hooks the audited repository happens to ship — unattended, at
+# 03:17, in a script whose entire purpose is to leave that repository
+# undisturbed. Measured against git 2.39.5, the hooks each of those fires are:
 #
-#   * `--no-verify` on the commit (added at the call site). It keeps
-#     pre-commit and commit-msg out of the loop entirely — not only because
-#     one that prompts or hangs would stall the run, but because a pre-commit
-#     that stages files of its own would put content into the index that the
-#     safety gates above never scanned, defeating the "nothing reaches the
+#   worktree add   reference-transaction, post-index-change, post-checkout
+#   status         post-index-change
+#   add            post-index-change
+#   checkout       reference-transaction, post-index-change, post-checkout
+#   commit         pre-commit, commit-msg, post-commit, and the two above
+#   branch -D      reference-transaction
+#   worktree remove, rev-parse, diff --cached   none
+#
+# Three defences, all needed:
+#
+#   * `-c core.hooksPath=/dev/null`, applied by this helper to every call it
+#     runs. `/dev/null` is not a directory, so git finds no hook of any name
+#     and runs none — including post-checkout, post-commit, and
+#     reference-transaction, which no command-line flag can suppress. This is
+#     the defence that actually stops the audited repository's hooks from
+#     executing at all.
+#   * `--no-verify` on the commit (added at the call site). Redundant with the
+#     above and kept deliberately: it is the defence that still holds if a git
+#     old enough to ignore `core.hooksPath` (pre-2.9) is ever on PATH, and a
+#     pre-commit that stages files of its own would put content into the index
+#     that the safety gates never scanned, defeating the "nothing reaches the
 #     index unscanned" guarantee.
-#   * Backgrounded and waited on, exactly as the CLI is. bash defers a trapped
-#     signal until the current FOREGROUND command returns, so a TERM arriving
-#     during a hung post-checkout hook would not reach the cleanup trap and
-#     the worktree would stay registered in the developer's repository
-#     indefinitely. `wait` is interruptible.
-#   * Bounded by the timeout binary when one is available. post-checkout and
-#     post-commit cannot be suppressed by any flag, so a hard wall-clock cap
-#     is the only thing that ends a hook that never returns.
-_run_git_hooked() {
+#   * Backgrounded and waited on, exactly as the CLI is, and bounded by the
+#     timeout binary when one is available. bash defers a trapped signal until
+#     the current FOREGROUND command returns, so a TERM arriving during a hung
+#     hook would not reach the cleanup trap and the worktree would stay
+#     registered in the developer's repository indefinitely. `wait` is
+#     interruptible, so the trap fires mid-hook and the wall-clock cap ends a
+#     hook that never returns on its own.
+#
+# `_run_git_hooked_in` takes the repository to run in, because `worktree add`
+# has to run in `$PKG` — the worktree it is about to create does not exist
+# yet. `_run_git_hooked` is the common case: inside the worktree.
+_run_git_hooked_in() {
+  _git_repo="$1"
+  shift
   if [ -n "$TIMEOUT_BIN" ]; then
-    "$TIMEOUT_BIN" "$GIT_TIMEOUT_SECONDS" git -C "$WT" "$@" &
+    "$TIMEOUT_BIN" "$GIT_TIMEOUT_SECONDS" \
+      git -C "$_git_repo" -c core.hooksPath=/dev/null "$@" &
   else
-    git -C "$WT" "$@" &
+    git -C "$_git_repo" -c core.hooksPath=/dev/null "$@" &
   fi
   CHILD_PID=$!
   wait "$CHILD_PID"
   _git_rc=$?
   CHILD_PID=""
   return "$_git_rc"
+}
+
+_run_git_hooked() {
+  _run_git_hooked_in "$WT" "$@"
 }
 
 trap _cleanup EXIT
@@ -547,7 +574,14 @@ _fail_run() {
   exit 1
 }
 
-if ! git -C "$PKG" worktree add -q --detach "$WT" "$HEAD_SHA" 2>"$TMPROOT/worktree.err"; then
+# `worktree add` runs in `$PKG` and fires the audited repository's
+# post-checkout hook, so it goes through the same helper every other
+# hook-firing call does. It was the one that did not, and a hanging
+# post-checkout therefore made the whole run un-interruptible: a TERM was
+# deferred until the hook returned, and the developer's live repository was
+# left with our worktree registered against it.
+if ! _run_git_hooked_in "$PKG" worktree add -q --detach "$WT" "$HEAD_SHA" \
+     2>"$TMPROOT/worktree.err"; then
   _fail_run "worktree add failed: $(tr '\n' ' ' < "$TMPROOT/worktree.err")"
 fi
 
@@ -651,7 +685,14 @@ _enumerate_changed_paths() {
       .git/*) continue ;;
     esac
     printf '%s\0' "$path" >> "$CHANGED_PATHS"
-  done < <(git -C "$WT" status --porcelain -z --untracked-files=all)
+  # `status` refreshes and rewrites the index, which fires post-index-change.
+  # It is read through a process substitution, so it cannot be backgrounded
+  # the way `_run_git_hooked` backgrounds its calls — the loop consumes its
+  # output as it is produced. Disabling the audited repository's hooks for
+  # this one invocation removes the hazard rather than bounding it: with no
+  # hook to run, there is nothing that can hang or prompt here at all.
+  done < <(git -C "$WT" -c core.hooksPath=/dev/null status \
+             --porcelain -z --untracked-files=all)
 }
 
 _enumerate_changed_paths
@@ -761,10 +802,11 @@ _run_git_hooked checkout -q -b "$BRANCH" 2>"$TMPROOT/branch.err" \
 
 # Explicit paths only, never `git add -A`, and every one of them came from the
 # list the secret gate just cleared — nothing reaches the index that was not
-# scanned.
-git -C "$WT" add -- "SECURITY_AUDIT.md" 2>/dev/null
+# scanned. `add` writes the index and so fires post-index-change; it goes
+# through the same helper as every other hook-firing call.
+_run_git_hooked add -- "SECURITY_AUDIT.md" 2>/dev/null
 while IFS= read -r -d '' rel; do
-  git -C "$WT" add -- "$rel" 2>/dev/null
+  _run_git_hooked add -- "$rel" 2>/dev/null
 done < "$CHANGED_PATHS"
 
 if git -C "$WT" diff --cached --quiet; then
@@ -772,7 +814,9 @@ if git -C "$WT" diff --cached --quiet; then
   # Discard the branch rather than leave an empty one behind, and record the
   # run as a success so the rotation moves on.
   _run_git_hooked checkout -q --detach "$HEAD_SHA" 2>/dev/null
-  git -C "$PKG" branch -D "$BRANCH" >/dev/null 2>&1
+  # `branch -D` deletes a ref, which fires reference-transaction in the
+  # audited repository. Same helper, same reason.
+  _run_git_hooked_in "$PKG" branch -D "$BRANCH" >/dev/null 2>&1
   _write_run_log_checked "ok" "" "" "audit produced no change" || exit 1
   echo "audit_run: $PKG_KEY audited at ${HEAD_SHA:0:8} — no change to commit"
   exit 0
@@ -813,7 +857,9 @@ EOF
 _run_git_hooked commit -q --no-verify -F "$MSG_FILE" 2>"$TMPROOT/commit.err" || {
   # A failed commit must not leave a branch behind either.
   _run_git_hooked checkout -q --detach "$HEAD_SHA" 2>/dev/null
-  git -C "$PKG" branch -D "$BRANCH" >/dev/null 2>&1
+  # `branch -D` deletes a ref, which fires reference-transaction in the
+  # audited repository. Same helper, same reason.
+  _run_git_hooked_in "$PKG" branch -D "$BRANCH" >/dev/null 2>&1
   _fail_run "commit failed: $(tr '\n' ' ' < "$TMPROOT/commit.err")"
 }
 
