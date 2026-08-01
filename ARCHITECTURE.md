@@ -317,12 +317,18 @@ writers; everything downstream is a reader.
 
 **`~/.claude/metrics/` is now a standalone nested git repo.** The repo-audit
 scheduling layer's `audit_store.ensure_store()` git-inits the metrics
-directory in place the first time it runs, and `assert_no_remote()` enforces,
-on every read, that no remote is ever configured for it — checked by asking
-`git remote` directly (failing CLOSED on any non-zero exit, since an
-unverifiable answer is not evidence the invariant holds) and by confirming no
-enclosing repository tracks the path without gitignoring it. `~/.claude/metrics`
-is the loop output root for every agent, not only the audit layer: the
+directory in place the first time it runs. `assert_no_remote()` is the
+enforcement point — checked by asking `git remote` directly (failing CLOSED on
+any non-zero exit, since an unverifiable answer is not evidence the invariant
+holds) and by confirming no enclosing repository tracks the path without
+gitignoring it — but it runs at two specific call sites, not on every access:
+once per nightly dispatch, in `audit_dispatch.py` before `load_config()` reads
+anything, and in `audit_store.py`'s own manual `check` action. Neither of the
+other two audit tools re-verifies it: `audit_digest.py`'s reads
+(`_iter_runs`, `write_digest`, `nudge`) and `audit_run.sh`'s run-log write
+(`_write_run_log`) both trust the invariant the nightly dispatch already
+checked, rather than confirming it again themselves. `~/.claude/metrics` is
+the loop output root for every agent, not only the audit layer: the
 `YYYY-MM.jsonl` shards described below and the audit layer's
 `audit/{runs,findings,digests}` tree are siblings under the same root and now
 share the same local git history, giving every write in either family a
