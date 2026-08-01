@@ -147,5 +147,48 @@ out=$(env HOME="$H" "$HOOK"); rc=$?
 [ $rc -eq 0 ] || { echo "FAIL: digest-notool exit $rc"; fails=1; }
 printf '%s\n' "$out" | grep -q 'Loop digest pending:' && { echo "FAIL: digest nudge fired with tool missing"; fails=1; }
 
+# --- Audit-digest nudge (section 5) -------------------------------------------
+# The hook resolves audit_digest.py and the store from $HOME/.claude, so every
+# case runs under an isolated HOME=$TMP. The nudge fires once for an unread
+# digest, then goes quiet — self-consuming, unlike the plain threshold nudges
+# above — and stays quiet when there is no digest at all or the tool is missing.
+
+# Build an isolated HOME with audit_digest.py (and its audit_store.py
+# dependency) installed. Prints the HOME path.
+audit_home() {
+  h="$SANDBOX/$1"
+  rm -rf "$h"
+  mkdir -p "$h/.claude/tools" "$h/.claude/metrics/audit/digests"
+  cp "$TOOLS/audit_digest.py" "$TOOLS/audit_store.py" "$h/.claude/tools/" 2>/dev/null
+  printf '%s' "$h"
+}
+
+# Case G: an unread digest -> exactly one audit nudge, inside the tags, and it
+# does not repeat on the next session once reported.
+H="$(audit_home aunread)"
+echo '# stub digest' > "$H/.claude/metrics/audit/digests/2026-07-30.md"
+out=$(env HOME="$H" "$HOOK"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: audit-unread exit $rc"; fails=1; }
+n=$(printf '%s\n' "$out" | grep -c 'Audit digest ready for review')
+[ "$n" -eq 1 ] || { echo "FAIL: expected 1 audit nudge, got $n"; fails=1; }
+printf '%s\n' "$out" | awk '/<resource-loop>/{o=1} /Audit digest ready for review/{if(o)f=1} /<\/resource-loop>/{o=0} END{exit f?0:1}' \
+  || { echo "FAIL: audit nudge not inside <resource-loop> tags"; fails=1; }
+out2=$(env HOME="$H" "$HOOK")
+[ -z "$out2" ] || { echo "FAIL: audit nudge repeated: $out2"; fails=1; }
+
+# Case H: no digest at all -> no audit nudge, exit 0.
+H="$(audit_home anone)"
+out=$(env HOME="$H" "$HOOK"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: audit-none exit $rc"; fails=1; }
+printf '%s\n' "$out" | grep -q 'Audit digest ready for review' && { echo "FAIL: audit nudge fired with no digest"; fails=1; }
+
+# Case I: tool missing -> degrade to no nudge, exit 0.
+H="$SANDBOX/anotool"
+rm -rf "$H"; mkdir -p "$H/.claude/metrics/audit/digests"
+echo '# stub digest' > "$H/.claude/metrics/audit/digests/2026-07-30.md"
+out=$(env HOME="$H" "$HOOK"); rc=$?
+[ $rc -eq 0 ] || { echo "FAIL: audit-notool exit $rc"; fails=1; }
+printf '%s\n' "$out" | grep -q 'Audit digest ready for review' && { echo "FAIL: audit nudge fired with tool missing"; fails=1; }
+
 [ $fails -eq 0 ] && echo "hook tests: OK" || echo "hook tests: FAIL"
 exit $fails

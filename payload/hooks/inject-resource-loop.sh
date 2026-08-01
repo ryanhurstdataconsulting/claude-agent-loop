@@ -101,6 +101,18 @@ PY
   [ -n "$close_line" ] && add_nudge "$close_line"
 fi
 
+# --- 5. repo-security-audit digest ---------------------------------------------
+# audit_run.sh already interrupts immediately for a Critical or High finding
+# (see severity_alert in audit_digest.py — the same rule drives its own OS
+# notification); everything routine waits here. Self-consuming like section 4
+# above: the newest digest is reported once, then silent until the next one
+# lands, so a routine night never trains the owner to ignore this line.
+AUDIT_DIGEST_TOOL="$HOME/.claude/tools/audit_digest.py"
+if command -v python3 >/dev/null 2>&1 && [ -r "$AUDIT_DIGEST_TOOL" ]; then
+  audit_line="$(python3 "$AUDIT_DIGEST_TOOL" --nudge 2>/dev/null)"
+  [ -n "$audit_line" ] && add_nudge "$audit_line"
+fi
+
 # --- emit only if there is something to say -----------------------------------
 if [ -n "$NUDGES" ]; then
   echo "<resource-loop>"
