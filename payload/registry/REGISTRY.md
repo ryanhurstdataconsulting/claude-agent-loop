@@ -52,3 +52,4 @@
 | audit-dispatch | tool | Nightly repo-security sweep: pick the due packages (interval elapsed AND HEAD moved), run each one, close with a digest |
 | audit-run | tool | Run one unattended repo-security audit — throwaway worktree, safety gates, commit to `audit/security-<date>`, never pushes |
 | audit-digest | tool | Severity-gated repo-audit alerts (Critical/High interrupt now) plus the batched digest and its SessionStart nudge |
+| repo-audit-action | tool | Per-change security audit in GitHub Actions — the four categories a checkout can answer, with the two it cannot stated on every run |

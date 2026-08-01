@@ -1,0 +1,189 @@
+# repo-security-audit.yml — a REDUCED, per-change security audit for CI.
+#
+# Copy this file to `.github/workflows/repo-security-audit.yml` in any
+# repository. It is a generic template: it names no client, no person, and no
+# path outside the checkout, and it needs no edits to run.
+#
+# WHAT THIS IS NOT
+# The nightly scheduler that runs the full repo-security audit works on a
+# machine, against a working copy, on a rotating cadence. This workflow is the
+# other half of that design: it fires on every change, and it can only see
+# what a fresh checkout contains. Four of the audit's six categories survive
+# that restriction. Two do not, and the workflow neither attempts them nor
+# lets a green check imply they passed:
+#
+#   * untracked-PII and gitignore compliance — unanswerable here by
+#     construction. A checkout contains only tracked files, so the very files
+#     this category exists to find are the ones CI can never see.
+#   * secrets.env symlink integrity — the state being checked is a property of
+#     a developer's machine. It does not exist on a runner at all.
+#
+# Every run says so, in the job summary and in a comment on the pull request,
+# in one fixed sentence that must not be reworded or dropped. A green check
+# that is silently partial is worse than no check: it retires the question.
+#
+# WHAT IT NEVER DOES
+# It has read-only repository permission, is granted no file-writing tool, and
+# creates no commit, no branch, and no findings document in the repository.
+# Findings are informational and never turn the check red — signal quality has
+# to be proven over real runs before a build is allowed to fail on it.
+#
+# SETUP — one manual step, by the repository owner
+# Add an `ANTHROPIC_API_KEY` repository secret (Settings -> Secrets and
+# variables -> Actions). This workflow deliberately cannot do that for you:
+# distributing an API key across repositories is an owner decision with a cost
+# and a blast radius, and it is outside this file's authority. Without the
+# secret the job does not fail — it reports the reduced audit as skipped and
+# exits green, which is also what happens for a pull request from a fork,
+# where secrets are withheld by GitHub.
+
+name: Repo security audit (reduced)
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: repo-security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reduced-audit:
+    name: Reduced security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # Full history: the tracked-code secret category reasons about what
+          # was committed over time, not only about the current tree.
+          fetch-depth: 0
+
+      - name: Resolve whether the audit can run
+        id: preflight
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "runnable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY is not available to this run, so the reduced audit was skipped. Adding the secret is a manual repository-owner step; pull requests from forks never receive it."
+          else
+            echo "runnable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        if: steps.preflight.outputs.runnable == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install the Claude Code CLI
+        if: steps.preflight.outputs.runnable == 'true'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run the reduced audit
+        id: audit
+        if: steps.preflight.outputs.runnable == 'true'
+        # Findings never fail the build, and neither does a CLI that errors:
+        # the report step below runs either way and says what happened.
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -u
+          cat > /tmp/audit-prompt.txt <<'PROMPT'
+          Audit this repository checkout for security and production readiness.
+
+          This is a REDUCED audit running in CI against a fresh checkout. Cover
+          exactly these four categories and no others:
+
+            1. Dependency CVEs — known-vulnerable versions in the lockfiles and
+               manifests present in the checkout.
+            2. Application-layer SAST — injection, unsafe deserialization,
+               path traversal, weak crypto, unsafe defaults, missing authorization
+               checks, and similar defects in the source.
+            3. Secrets in tracked code — credentials, tokens, private keys, and
+               connection strings committed to this repository.
+            4. CI/CD readiness — workflow permissions wider than needed,
+               unpinned third-party actions, secrets exposed to untrusted
+               triggers, and missing branch protections visible from the tree.
+
+          Do NOT attempt these two, and do not speculate about them. A checkout
+          contains only tracked files, so untracked content cannot be examined
+          here, and a developer machine's symlink state does not exist on a
+          runner:
+
+            - untracked-PII and gitignore compliance
+            - secrets.env symlink integrity
+
+          Read only. Do not modify, create, or delete any file. Do not create a
+          findings document in the repository — the caller renders your result
+          itself.
+
+          End your run with a JSON object carrying a "findings" object whose
+          keys are critical, high, medium, and low, each an integer count, and
+          a "summary" string of at most 2000 characters describing the most
+          serious findings and where they are.
+          PROMPT
+          # No file-writing tool is granted, so this run cannot alter the
+          # checkout even if the prompt above were ignored entirely. The
+          # allowlist names read-only scanners one at a time rather than
+          # opening Bash wholesale.
+          claude -p "$(cat /tmp/audit-prompt.txt)" \
+            --allowedTools Read Grep Glob \
+                           'Bash(pip-audit:*)' 'Bash(npm audit:*)' \
+                           'Bash(gitleaks:*)' 'Bash(semgrep:*)' \
+                           'Bash(git log:*)' 'Bash(git diff:*)' \
+                           'Bash(git ls-files:*)' 'Bash(git rev-parse:*)' \
+            --output-format json \
+            --max-turns 30 \
+            > /tmp/audit-result.json
+
+      - name: Render the report
+        if: always()
+        env:
+          RUNNABLE: ${{ steps.preflight.outputs.runnable }}
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          set -u
+          {
+            echo "## Reduced security audit"
+            echo
+            echo "This is a REDUCED audit. Two categories cannot run in CI: untracked-PII/gitignore compliance and secrets.env symlink integrity. A passing check here is not a full audit."
+            echo
+            if [ "${RUNNABLE:-false}" != "true" ]; then
+              echo "**Skipped.** No \`ANTHROPIC_API_KEY\` was available to this run."
+              echo "Adding the secret is a manual repository-owner step, and pull"
+              echo "requests from forks never receive it."
+            elif [ "${AUDIT_OUTCOME:-failure}" != "success" ]; then
+              echo "**The audit did not complete.** Its findings are unknown for this"
+              echo "change; treat this run as no evidence either way."
+            else
+              echo "Covered here: dependency CVEs, application-layer SAST, secrets in"
+              echo "tracked code, and CI/CD readiness."
+              echo
+              echo '```json'
+              cat /tmp/audit-result.json 2>/dev/null || echo '{}'
+              echo '```'
+            fi
+            echo
+            echo "Findings are informational. This check does not go red on them."
+          } > /tmp/audit-comment.md
+          cat /tmp/audit-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the pull request
+        if: always() && github.event_name == 'pull_request'
+        # A fork's token is read-only, so this is expected to be a no-op there;
+        # the job summary carries the same text in every case.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR_NUMBER" --body-file /tmp/audit-comment.md

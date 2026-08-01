@@ -105,21 +105,31 @@ fleet pulls merged contributions on its next session.
 
 ## The repo-audit scheduling layer
 
-A separate, launchd-triggered subsystem wraps the pre-existing
-`repo-security-auditor` agent (an owner-local resource, not bundled by this
-export) in a rotating, unattended nightly sweep across many packages, on a
-cadence tiered by how sensitive or fast-moving each one is. Where the
-resource loop above is session-shaped — one hook, one skill, driven by a
-human starting a session — this layer is calendar-shaped: it runs whether or
-not anyone is at the keyboard, so its whole design leans on non-disturbance
+A separate subsystem wraps the pre-existing `repo-security-auditor` agent (an
+owner-local resource, not bundled by this export) in unattended runs across
+many packages. It has **two triggers, both built**: a launchd nightly sweep on
+a cadence tiered by how sensitive or fast-moving each package is, and a
+GitHub Actions workflow that fires on every push and pull request. Where the
+resource loop above is session-shaped — one hook, one skill, driven by a human
+starting a session — this layer is calendar- and event-shaped: it runs whether
+or not anyone is at the keyboard, so its whole design leans on non-disturbance
 and severity-gated surfacing rather than on a human being present to notice
 something going wrong.
+
+The nightly path is the complete one, and it is the one diagrammed below. The
+Actions path is deliberately reduced — see "The Actions trigger" after the
+diagram.
 
 ```
   launchd (03:17 daily, off the :00 mark so a fleet does not stampede)
         │
         ▼
-  audit_dispatch.py --workspace DIR          payload/tools/audit_dispatch.py
+  audit_dispatch.py                          payload/tools/audit_dispatch.py
+   • resolves the workspace root: --workspace, else audit/config.json's
+     `workspace` key, else ~/dev. The plist passes no --workspace at
+     all — it is a template shipped verbatim to every machine, and a
+     home-relative path baked into it is wrong everywhere else, and
+     wrong silently
    • reads audit_store's audit/config.json tiers
    • per package: head_sha() + is_due() — tier interval elapsed AND HEAD
      moved, never audited, or unverifiable all count as due
@@ -164,6 +174,36 @@ can be exercised without spending a cent. What remains reserved for the owner
 is loading the job (`launchctl bootstrap`) and the first live run, which
 spends real budget against a real repository.
 
+**The Actions trigger is built, and it is honest about being partial.**
+`payload/templates/repo-security-audit.yml` is a generic workflow template —
+copy it to `.github/workflows/` in any repository, no edits needed. It fires
+on push and pull request and runs the four categories a checkout can answer:
+dependency CVEs, application-layer SAST, secrets in tracked code, and CI/CD
+readiness. It does not attempt the other two, and the reason is structural
+rather than an omission. Untracked-PII and gitignore compliance is
+unanswerable in CI by construction — a checkout contains only tracked files,
+so the very files that category exists to find are the ones a runner can never
+be shown. And `secrets.env` symlink integrity is a property of a developer's
+machine, which does not exist on a runner at all. Every run therefore states
+its own limits in one fixed sentence, in the job summary and in a
+pull-request comment, and a fixed-string test
+(`payload/tools/tests/test_actions_template.sh`) pins that sentence so a later
+edit cannot quietly soften or drop it. A green check that is silently partial
+is worse than no check: it retires the question.
+
+The workflow's authority is deliberately smaller than the nightly runner's.
+It holds `contents: read`, is granted no file-writing tool, and creates no
+commit, no branch, and no findings document — the nightly path's output is a
+reviewable branch in the package's own repository, and this path's output is a
+comment. Findings never turn the check red; failing a build on them is a
+decision to take once signal quality is proven over real runs, not a default
+to ship with. The one thing it needs, an `ANTHROPIC_API_KEY` repository
+secret, is a manual owner step by design: distributing an API key across
+repositories has a real cost and a real blast radius, and it sits outside a
+workflow file's authority. Without the secret — and on pull requests from
+forks, where GitHub withholds secrets — the job reports the audit as skipped
+and exits green rather than going red on an infrastructure fact.
+
 **The store key is passed, never re-derived.** `audit_dispatch` hands
 `audit_run.sh` the package's own `config.json` string with `--key`, and that
 string is the path the run log is written under. A package key is a
@@ -182,13 +222,21 @@ audits are exactly the ones guaranteed to trip the gate, and discarding them
 with the worktree would mean the layer structurally cannot deliver its best
 output. The document is copied to `audit/quarantine/<key>/` in the local-only
 store and the package repository receives nothing. Second, git calls run with
-the audited repository's hooks disarmed — `--no-verify` on the commit, every
-hook-triggering call backgrounded and waited on so the cleanup trap can fire,
-and bounded by `AUDIT_GIT_TIMEOUT`. A worktree shares `.git/hooks` with the
-checkout it came from, so one hanging `pre-commit` would otherwise leave a
-worktree registered in the developer's repository indefinitely, and a
-`pre-commit` that stages files would put unscanned content into the index the
-gates had just cleared.
+the audited repository's hooks disarmed. A worktree shares `.git/hooks` with
+the checkout it came from, so `worktree add`, `checkout`, `add`, `commit`, and
+`branch -D` all execute whatever hooks that repository happens to ship —
+unattended, at 03:17, in a script whose entire purpose is to leave it
+undisturbed. Three defences, in order of what each actually stops: every such
+call passes `-c core.hooksPath=/dev/null`, so git finds no hook of any name
+and runs none, including the `post-checkout`, `post-commit`, and
+`reference-transaction` hooks that no command-line flag can suppress;
+`--no-verify` on the commit holds the line for a git old enough to ignore
+`core.hooksPath`, and stops a `pre-commit` that stages files of its own from
+putting unscanned content into the index the gates had just cleared; and each
+call is backgrounded, waited on, and bounded by `AUDIT_GIT_TIMEOUT`, because
+bash defers a trapped signal until the current foreground command returns —
+one hanging hook would otherwise make the run un-interruptible and leave a
+worktree registered in the developer's repository indefinitely.
 
 **A decision recorded here, not re-litigated: the git tool allowlist.**
 `audit_run.sh` narrows the headless agent's Bash allowlist to read-only git

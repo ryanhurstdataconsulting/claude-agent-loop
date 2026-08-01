@@ -255,8 +255,16 @@ link-dir tools/tests
 link-file launchd/com.hdc.claude-agent-loop.repo-audit.plist
 link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
 
-# --- registry/guides/ (30 guides + template) --------------------------------
+# --- templates/ (copied into a target repo by hand, never auto-installed) ----
+link-dir templates
+
+# --- registry/guides/ (38 guides + template) --------------------------------
 link-file registry/guides/_TEMPLATE.md
+link-file registry/guides/assess-task.md
+link-file registry/guides/audit-digest.md
+link-file registry/guides/audit-dispatch.md
+link-file registry/guides/audit-run.md
+link-file registry/guides/audit-store.md
 link-file registry/guides/background-build-watch.md
 link-file registry/guides/check-coverage.md
 link-file registry/guides/cloud-architect.md
@@ -274,8 +282,11 @@ link-file registry/guides/lint-registry.md
 link-file registry/guides/lint-roles.md
 link-file registry/guides/loop-contribute.md
 link-file registry/guides/machine-prose-grammar-gate.md
+link-file registry/guides/make-brief.md
+link-file registry/guides/plan-task.md
 link-file registry/guides/playwright.md
 link-file registry/guides/postgres-readonly.md
+link-file registry/guides/repo-audit-action.md
 link-file registry/guides/resource-loop.md
 link-file registry/guides/role-agents.md
 link-file registry/guides/route-role.md
