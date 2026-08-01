@@ -4,6 +4,8 @@
 Hermetic: every case builds its store under ``tempfile.mkdtemp()`` and tears
 it down afterward. Nothing here touches the real ``~/.claude`` tree.
 """
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -54,6 +56,141 @@ class TestEnsureStore(unittest.TestCase):
         st.ensure_store(self.tmp)
         gi = pathlib.Path(self.tmp) / ".gitignore"
         self.assertTrue(gi.is_file())
+
+    def test_creates_quarantine_and_logs_directories(self):
+        st.ensure_store(self.tmp)
+        for sub in ("audit/quarantine", "audit/logs"):
+            self.assertTrue((pathlib.Path(self.tmp) / sub).is_dir(), sub)
+
+
+class TestGitignoreScope(unittest.TestCase):
+    """The store root IS the metrics tree, so the ignore file must be narrow.
+
+    An empty ``.gitignore`` (what earlier versions wrote) leaves the resource
+    loop's monthly shards, budget checkpoints, and every other sibling of
+    ``audit/`` untracked-but-not-ignored — one ``git add -A`` run in that
+    directory by a human or an agent sweeps the whole ~2.5 MB tree into a
+    commit. These cases pin the two halves of the scope: siblings out,
+    ``audit/`` in.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        st.ensure_store(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _ignored(self, relpath):
+        target = pathlib.Path(self.tmp) / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x")
+        result = subprocess.run(
+            ["git", "-C", self.tmp, "check-ignore", "-q", str(target)],
+            capture_output=True, text=True,
+        )
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        return result.returncode == 0
+
+    def test_sibling_metrics_shard_is_ignored(self):
+        self.assertTrue(self._ignored("2026-07.jsonl"))
+
+    def test_sibling_state_tree_is_ignored(self):
+        self.assertTrue(self._ignored("state/budget/checkpoints/session.md"))
+
+    def test_audit_run_logs_are_tracked(self):
+        self.assertFalse(self._ignored("audit/runs/pkg/2026-07-31.json"))
+
+    def test_audit_digests_are_tracked(self):
+        self.assertFalse(self._ignored("audit/digests/2026-07-31.md"))
+
+    def test_audit_quarantine_is_tracked(self):
+        self.assertFalse(
+            self._ignored("audit/quarantine/nested/pkg/2026-07-31-SECURITY_AUDIT.md"))
+
+    def test_job_logs_are_not_tracked(self):
+        self.assertTrue(self._ignored("audit/logs/repo-audit.out.log"))
+
+    def test_an_empty_gitignore_from_an_older_store_is_repaired(self):
+        gi = pathlib.Path(self.tmp) / ".gitignore"
+        gi.write_text("")
+        st.ensure_store(self.tmp)
+        self.assertIn("!/audit/", gi.read_text())
+
+
+class TestCommitPaths(unittest.TestCase):
+    """The store's git history has to be real, not just initialised."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        st.ensure_store(self.tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write(self, relpath):
+        target = pathlib.Path(self.tmp) / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}\n")
+        return target
+
+    def _tracked(self):
+        out = subprocess.run(["git", "-C", self.tmp, "ls-files"],
+                             capture_output=True, text=True).stdout
+        return set(out.split())
+
+    def test_commits_an_artifact_and_returns_a_sha(self):
+        self._write("audit/runs/pkg/2026-07-31.json")
+        sha = st.commit_paths(self.tmp, ["audit/runs/pkg/2026-07-31.json"], "msg")
+        self.assertTrue(sha)
+        self.assertIn("audit/runs/pkg/2026-07-31.json", self._tracked())
+
+    def test_accepts_absolute_paths_inside_the_store(self):
+        target = self._write("audit/digests/2026-07-31.md")
+        self.assertTrue(st.commit_paths(self.tmp, [target], "msg"))
+        self.assertIn("audit/digests/2026-07-31.md", self._tracked())
+
+    def test_the_gitignore_is_committed_by_ensure_store(self):
+        self.assertIn(".gitignore", self._tracked())
+
+    def test_the_commit_cli_stages_an_artifact(self):
+        target = self._write("audit/runs/pkg/2026-07-31.json")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = st.main(["--root", self.tmp, "--message", "audit(store): via cli",
+                          "commit", str(target)])
+        self.assertEqual(rc, 0)
+        self.assertTrue(buf.getvalue().strip())  # the new commit's sha
+        self.assertIn("audit/runs/pkg/2026-07-31.json", self._tracked())
+
+    def test_a_path_outside_the_store_is_never_staged(self):
+        outside = pathlib.Path(tempfile.mkdtemp()) / "secret.txt"
+        outside.write_text("nope")
+        self.addCleanup(shutil.rmtree, str(outside.parent), ignore_errors=True)
+        self.assertIsNone(st.commit_paths(self.tmp, [outside], "msg"))
+        # Only the ignore file ensure_store commits — nothing from outside.
+        self.assertEqual(self._tracked(), {".gitignore"})
+
+    def test_a_missing_path_is_skipped_rather_than_raising(self):
+        self.assertIsNone(
+            st.commit_paths(self.tmp, ["audit/runs/pkg/nope.json"], "msg"))
+
+    def test_nothing_to_commit_returns_none(self):
+        self._write("audit/runs/pkg/2026-07-31.json")
+        st.commit_paths(self.tmp, ["audit/runs/pkg/2026-07-31.json"], "msg")
+        self.assertIsNone(
+            st.commit_paths(self.tmp, ["audit/runs/pkg/2026-07-31.json"], "msg"))
+
+    def test_a_store_with_no_repo_is_not_an_error(self):
+        plain = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, plain, ignore_errors=True)
+        (pathlib.Path(plain) / "f.json").write_text("{}")
+        self.assertIsNone(st.commit_paths(plain, ["f.json"], "msg"))
+
+    def test_the_store_never_gains_a_remote(self):
+        self._write("audit/runs/pkg/2026-07-31.json")
+        st.commit_paths(self.tmp, ["audit/runs/pkg/2026-07-31.json"], "msg")
+        st.assert_no_remote(self.tmp)  # must not raise
 
 
 class TestNoRemoteInvariant(unittest.TestCase):

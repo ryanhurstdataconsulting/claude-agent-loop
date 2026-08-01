@@ -64,7 +64,12 @@ git -C "$PKG" rev-parse --verify "audit/security-$(date +%F)" >/dev/null 2>&1 \
 AUDIT_CLAUDE_BIN="$TMP/nope" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
 [ $? -eq 4 ] && pass "7 missing claude exits 4" || die "7 wrong exit for missing claude"
 
-# Gate abort: a stub that plants a fake secret must abort and leave no branch.
+# 8. A credential in the FINDINGS DOCUMENT quarantines; it must never vanish.
+# Quoting the credential it found is a findings document's job, so the audits
+# most worth reading are precisely the ones guaranteed to trip the secret
+# gate. Discarding them with the worktree would mean this layer structurally
+# cannot deliver its highest-value output. The document is copied into the
+# store — local-only, no remote — and the package repo gets nothing.
 STUB2="$TMP/claude-secret"; cat > "$STUB2" <<'EOS'
 #!/bin/bash
 wt=""; while [ $# -gt 0 ]; do [ "$1" = "--add-dir" ] && wt="$2"; shift; done
@@ -73,11 +78,25 @@ printf 'AKIAIOSFODNN7EXAMPLE\naws_secret_access_key = wJalrXUtnFEMI/K7MDENG\n' \
 echo '{"result":"ok","findings":{"critical":0,"high":0,"medium":0,"low":0}}'
 EOS
 chmod +x "$STUB2"
+QKEY="quarantine-case"
+QLOG="$STORE/audit/runs/$QKEY/$(date +%F).json"
+QFILE="$STORE/audit/quarantine/$QKEY/$(date +%F)-SECURITY_AUDIT.md"
 git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
-AUDIT_CLAUDE_BIN="$STUB2" bash "$SCRIPT" "$PKG" "$STORE" >/dev/null 2>&1
-[ $? -eq 3 ] && pass "8 secret in audit file aborts (exit 3)" || die "8 gate did not abort"
+AUDIT_CLAUDE_BIN="$STUB2" bash "$SCRIPT" "$PKG" "$STORE" --key "$QKEY" \
+  >/dev/null 2>&1
+[ $? -eq 5 ] && pass "8 secret in the findings doc quarantines (exit 5)" \
+  || die "8 findings doc was not quarantined"
+[ -f "$QFILE" ] && pass "8b the findings document survives in the store" \
+  || die "8b the findings document was discarded"
 git -C "$PKG" rev-parse --verify "audit/security-$(date +%F)" >/dev/null 2>&1 \
-  && die "8b aborted run still left a branch" || pass "8b no branch after abort"
+  && die "8c quarantined run still created a branch" \
+  || pass "8c no branch after quarantine"
+grep -q '"verdict": "quarantined"' "$QLOG" \
+  && pass "8d run log records the quarantined verdict" \
+  || die "8d quarantined verdict not recorded"
+grep -q '"last_audit_date"' "$QLOG" \
+  && die "8e a quarantined run marked the package audited" \
+  || pass "8e a quarantined run leaves the package due"
 
 # 9. The commit body is machine-generated prose in front of a human, so it is
 # held to the same grammar gate as any other generated text.
@@ -145,9 +164,10 @@ git -C "$PKG" worktree list | grep -q "audit-pkg-" \
 git -C "$PKG" worktree remove --force "$OTHER" >/dev/null 2>&1
 git -C "$PKG" worktree prune >/dev/null 2>&1
 
-# 12. The secret gate covers every file the agent touched, not just the
-# findings document — a credential in an auto-applied "low-risk fix" must
-# block the commit too.
+# 12. The other half of the split. A credential in a CODE FIX is an agent
+# introducing a credential into the client's source, so it still aborts the
+# commit outright — the quarantine path above applies to the findings prose
+# and to nothing else.
 STUB5="$TMP/claude-leaky-fix"; cat > "$STUB5" <<'EOS'
 #!/bin/bash
 wt=""; while [ $# -gt 0 ]; do [ "$1" = "--add-dir" ] && wt="$2"; shift; done
@@ -203,6 +223,83 @@ git -C "$PKG" worktree list | grep -q "live/audit-pkg-" \
 git -C "$PKG" worktree list | grep -q "audit-pkg-$(date +%F)-" \
   && die "14d our own worktree was left registered" \
   || pass "14d our own worktree still removed"
+
+# 15. THE key round-trip. A package key is a workspace-relative path, so a
+# nested key must write state exactly where audit_dispatch.last_state reads
+# it. A flat-name case cannot catch this: while the runner derived the key
+# from `basename <package-path>`, state for HDC-shaped keys landed one level
+# shallower than the reader looked, so every nested package reported "never
+# audited" every night — a full agent session per package per night, forever.
+NESTED_KEY="client-dir/pkg"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" --key "$NESTED_KEY" \
+  >/dev/null 2>&1
+[ -f "$STORE/audit/runs/$NESTED_KEY/$(date +%F).json" ] \
+  && pass "15 a nested key writes its run log at the nested path" \
+  || die "15 nested run log not written where the key says"
+ROUNDTRIP="$(cd "$HERE/.." && python3 -c '
+import sys
+sys.path.insert(0, ".")
+import audit_dispatch
+print(audit_dispatch.last_state(sys.argv[1], sys.argv[2]).get("last_audited_sha") or "")
+' "$STORE" "$NESTED_KEY" 2>/dev/null)"
+[ -n "$ROUNDTRIP" ] \
+  && pass "15b audit_dispatch.last_state reads the nested key back" \
+  || die "15b write/read key mismatch — the package would read as never audited"
+[ "$ROUNDTRIP" = "$(git -C "$PKG" rev-parse HEAD)" ] \
+  && pass "15c the round-tripped sha is this run's HEAD" \
+  || die "15c round-tripped sha does not match HEAD"
+
+# 16. The audited repository's own hooks must not run. A worktree shares
+# `.git/hooks` with the checkout it came from, so without --no-verify a
+# hanging or prompting pre-commit would stall this unattended run past its
+# own timeout — which wraps only the CLI — and leave a worktree registered in
+# the developer's repository indefinitely. A pre-commit that stages files
+# would also put content into the index that the safety gates never scanned.
+HOOK_MARK="$TMP/pre-commit-ran"
+mkdir -p "$PKG/.git/hooks"
+cat > "$PKG/.git/hooks/pre-commit" <<EOS
+#!/bin/bash
+touch "$HOOK_MARK"
+exit 1
+EOS
+chmod +x "$PKG/.git/hooks/pre-commit"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" --key hook-case \
+  >/dev/null 2>&1
+rc=$?
+[ $rc -eq 0 ] && pass "16 the commit succeeds despite a failing pre-commit hook" \
+  || die "16 the audited repo's pre-commit hook ran and broke the run (exit $rc)"
+[ -f "$HOOK_MARK" ] && die "16b the pre-commit hook executed" \
+  || pass "16b the pre-commit hook never executed"
+rm -f "$PKG/.git/hooks/pre-commit"
+
+# 17. A run log that cannot be written is a lost run, not a quiet success.
+# Before this was checked, the empty count string fell through to a
+# "audit: pkg —  critical,  high" notification: malformed AND wrong.
+LOSTKEY="lost-log"
+mkdir -p "$STORE/audit/runs"
+printf 'not a directory\n' > "$STORE/audit/runs/$LOSTKEY"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+LOST_OUT="$TMP/lost.log"
+AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" --key "$LOSTKEY" \
+  > "$LOST_OUT" 2>&1
+rc=$?
+[ $rc -eq 1 ] && pass "17 an unwritable run log fails the run (exit 1)" \
+  || die "17 an unwritable run log was ignored (exit $rc)"
+grep -q "scheduler state was lost" "$LOST_OUT" \
+  && pass "17b the lost run log is reported explicitly" \
+  || die "17b no explicit report of the lost run log"
+grep -qE '^audit_run: .* — +critical' "$LOST_OUT" \
+  && die "17c a malformed count line was still emitted" \
+  || pass "17c no malformed count line"
+rm -f "$STORE/audit/runs/$LOSTKEY"
+
+# 18. An absolute or traversing key must never write outside the store.
+bash "$SCRIPT" "$PKG" "$STORE" --key "/etc/passwd" >/dev/null 2>&1
+[ $? -eq 2 ] && pass "18 an absolute --key is refused" || die "18 absolute key accepted"
+bash "$SCRIPT" "$PKG" "$STORE" --key "../escape" >/dev/null 2>&1
+[ $? -eq 2 ] && pass "18b a traversing --key is refused" || die "18b '..' key accepted"
 
 [ $fail -eq 0 ] && { echo "test_audit_run: PASS"; exit 0; }
 echo "test_audit_run: FAIL"; exit 1

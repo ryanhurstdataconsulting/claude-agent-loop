@@ -48,7 +48,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import audit_store  # noqa: E402  (path set up above)
 
 SEVERITIES = ("critical", "high", "medium", "low")
-ALERT_VERDICTS = ("blocked", "failed")
+ALERT_VERDICTS = ("blocked", "failed", "quarantined")
+UNPARSED = "findings unparsed"
 
 
 def _now_dt():
@@ -59,31 +60,70 @@ def _iso(dt):
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def findings_map(run):
+    """Return ``run``'s findings object, or ``None`` when there is not one.
+
+    ``audit_run.sh`` writes ``"findings": null`` rather than fabricating zero
+    counts whenever it cannot parse a severity object out of the CLI's
+    output. That distinction is the whole value of the no-fabrication
+    contract, and it has to survive all the way to the reader: ``null`` means
+    "nobody knows", which is emphatically not the same claim as "zero".
+    Anything that is not a dict — ``None``, a missing key, a string, a list —
+    collapses to ``None`` here, and every caller renders that as
+    :data:`UNPARSED` rather than as a count.
+    """
+    findings = run.get("findings")
+    return findings if isinstance(findings, dict) else None
+
+
+def _count(findings, severity):
+    """One severity count as an int — never a string, never ``None``.
+
+    The run log is JSON written from a shell pipeline, so a count can arrive
+    as ``"3"`` or as something unusable. Every render path formats with
+    ``%d``, which raises on a string, so coercion happens here once rather
+    than being assumed at each call site.
+    """
+    try:
+        return int(findings.get(severity) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def severity_alert(run):
     """Return the immediate-notification text for ``run``, or ``None``.
 
-    Two independent triggers, either one enough to interrupt rather than wait
+    Three independent triggers, any one enough to interrupt rather than wait
     for the digest:
 
-    1. ``findings.critical`` or ``findings.high`` is non-zero. Medium, Low,
+    1. ``verdict`` is ``blocked``, ``failed``, or ``quarantined``. Those runs
+       may carry no findings at all (a crashed CLI leaves ``findings: null``),
+       but a gate abort, a crash, or a findings document held back from a
+       client repo is precisely the silent failure this layer exists to catch
+       — none of them may read as "clean" just because nothing was counted.
+    2. The findings object is absent or unparseable. The same reasoning, one
+       step further: a run that SUCCEEDED but whose severity counts could not
+       be read tells us nothing about whether it was clean, so it is surfaced
+       rather than rendered as ``0/0``, which would be a fabricated all-clear.
+    3. ``findings.critical`` or ``findings.high`` is non-zero. Medium, Low,
        and Informational NEVER escalate here, no matter how many pile up —
        that is the whole point of a severity-gated alert instead of a
        count-gated one.
-    2. ``verdict`` is ``blocked`` or ``failed``. Those runs may carry no
-       findings at all (a crashed CLI leaves ``findings: null``), but a gate
-       abort or a crash is precisely the silent failure this layer exists to
-       catch — it must not read as "clean" just because nothing was counted.
     """
     package = run.get("package") or "<unknown package>"
     verdict = run.get("verdict")
-    findings = run.get("findings") or {}
-    critical = findings.get("critical") or 0
-    high = findings.get("high") or 0
 
     if verdict in ALERT_VERDICTS:
         note = run.get("note") or "no further detail recorded"
         return "audit %s: %s — %s" % (verdict, package, note)
 
+    findings = findings_map(run)
+    if findings is None:
+        return ("audit unparsed: %s — the run recorded no readable severity "
+                "counts, so it cannot be treated as clean" % package)
+
+    critical = _count(findings, "critical")
+    high = _count(findings, "high")
     if critical or high:
         return "audit alert: %s — %d critical, %d high" % (package, critical, high)
 
@@ -91,7 +131,17 @@ def severity_alert(run):
 
 
 def _iter_runs(root):
-    """Yield ``(package, record)`` for every run-log JSON under ``root``.
+    """Yield ``(package_key, record)`` for every run-log JSON under ``root``.
+
+    The walk is RECURSIVE, and that is load-bearing rather than incidental. A
+    package key is the string that names it in ``config.json``, and real keys
+    are workspace-relative paths — ``<client-dir>/<package>`` — so a run log
+    lands at ``runs/<client-dir>/<package>/<date>.json``, two levels down. A
+    single-level ``iterdir()`` walk would find only the intermediate
+    directory, which holds no JSON at all, and every nested package would
+    silently vanish from the digest. The yielded key is the path relative to
+    ``runs/``, which is exactly the key ``audit_dispatch.last_state`` reads
+    back and the key ``audit_run.sh --key`` was handed.
 
     Tolerates a missing runs directory, an unreadable or malformed file, and
     a JSON payload that isn't an object — each is skipped rather than
@@ -102,24 +152,24 @@ def _iter_runs(root):
     """
     runs_dir = pathlib.Path(root) / "audit" / "runs"
     try:
-        pkg_dirs = sorted(p for p in runs_dir.iterdir() if p.is_dir())
+        files = sorted(
+            p for p in runs_dir.rglob("*.json")
+            if p.is_file() and p.name != "state.json"
+        )
     except OSError:
         return
-    for pkg_dir in pkg_dirs:
+    for f in files:
         try:
-            files = sorted(
-                p for p in pkg_dir.glob("*.json")
-                if p.is_file() and p.name != "state.json"
-            )
-        except OSError:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             continue
-        for f in files:
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if isinstance(data, dict):
-                yield pkg_dir.name, data
+        if not isinstance(data, dict):
+            continue
+        key = str(f.parent.relative_to(runs_dir))
+        if key == ".":
+            # A stray run log directly under runs/ has no key of its own.
+            key = data.get("package") or "<unknown package>"
+        yield key, data
 
 
 def _sort_key(item):
@@ -187,10 +237,17 @@ def render(root, since):
         lines.append("None.")
     else:
         for pkg, record in routine:
-            findings = record.get("findings") or {}
-            counts = ", ".join(
-                "%s %d" % (sev, findings.get(sev) or 0) for sev in SEVERITIES
-            )
+            findings = findings_map(record)
+            if findings is None:
+                # Unreachable while severity_alert treats an unparseable
+                # findings object as alert-worthy, and kept anyway: rendering
+                # a missing object as "critical 0, high 0" is the exact
+                # fabricated all-clear this layer must never print.
+                counts = UNPARSED
+            else:
+                counts = ", ".join(
+                    "%s %d" % (sev, _count(findings, sev)) for sev in SEVERITIES
+                )
             lines.append(
                 "- `%s` %s — verdict %s, %s"
                 % (record.get("date") or "?", pkg, record.get("verdict") or "?", counts)
@@ -208,6 +265,12 @@ def write_digest(root):
     day overwrites with the now-current window rather than accumulating
     duplicates), and advances ``.last-digest`` to this run's instant. Returns
     the path written, as a string.
+
+    The digest and its window marker are then committed to the store's own
+    git history through :func:`audit_store.commit_paths` — no remote, no
+    push, explicit paths only. A store that cannot be committed to (no repo
+    yet, a git error) still gets the file: the commit is best-effort and
+    never changes what this function returns.
     """
     digests_dir = pathlib.Path(root) / "audit" / "digests"
     digests_dir.mkdir(parents=True, exist_ok=True)
@@ -224,6 +287,12 @@ def write_digest(root):
     out_path = digests_dir / (now.strftime("%Y-%m-%d") + ".md")
     out_path.write_text(text, encoding="utf-8")
     marker.write_text(_iso(now) + "\n", encoding="utf-8")
+
+    audit_store.commit_paths(
+        root,
+        [out_path, marker],
+        "audit(store): digest for %s" % now.strftime("%Y-%m-%d"),
+    )
 
     return str(out_path)
 

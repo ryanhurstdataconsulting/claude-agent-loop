@@ -4,11 +4,20 @@
 <dict>
     <key>Label</key>
     <string>com.hdc.claude-agent-loop.repo-audit</string>
+    <!-- The job's own stdout/stderr are redirected by the shell, not by
+         launchd's StandardOutPath/StandardErrorPath (which are /dev/null
+         below). The dispatch log names client packages one per due line, so
+         it must NOT land in world-readable /tmp the way the usage-poll job's
+         log does — that job logs only anonymous quota numbers, and this is a
+         different sensitivity class. launchd performs no variable or tilde
+         expansion in its path keys, so the only way to reach a path under
+         $HOME from a template that is copied verbatim onto any machine is to
+         redirect from inside the shell command. -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>exec /usr/bin/env python3 "$HOME/.claude/tools/audit_dispatch.py" --workspace "$HOME/dev"</string>
+        <string>LOGS="$HOME/.claude/metrics/audit/logs"; mkdir -p "$LOGS"; exec /usr/bin/env python3 "$HOME/.claude/tools/audit_dispatch.py" --workspace "$HOME/dev" >>"$LOGS/repo-audit.out.log" 2>>"$LOGS/repo-audit.err.log"</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -22,8 +31,8 @@
     <key>ProcessType</key>
     <string>Background</string>
     <key>StandardOutPath</key>
-    <string>/tmp/com.hdc.claude-agent-loop.repo-audit.out.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/com.hdc.claude-agent-loop.repo-audit.err.log</string>
+    <string>/dev/null</string>
 </dict>
 </plist>

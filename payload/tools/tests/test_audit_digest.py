@@ -14,6 +14,7 @@ import io
 import json
 import pathlib
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -109,6 +110,41 @@ class TestSeverityAlert(unittest.TestCase):
         self.assertIsNotNone(msg)
         self.assertIn("acme", msg)
 
+    def test_unparseable_findings_on_an_ok_run_still_alert(self):
+        # The no-fabrication contract's one consumer. audit_run.sh writes
+        # `findings: null` rather than inventing zeros when it cannot parse
+        # the CLI's output; rendering that as 0/0 here would turn "nobody
+        # knows" into an all-clear, and this is the only place that mistake
+        # would ever be caught.
+        run = make_run("acme", "2026-07-30", no_findings=True)
+        msg = ad.severity_alert(run)
+        self.assertIsNotNone(msg)
+        self.assertIn("acme", msg)
+        self.assertIn("unparsed", msg)
+
+    def test_a_findings_object_of_the_wrong_type_alerts(self):
+        run = make_run("acme", "2026-07-30")
+        run["findings"] = "critical: 3"
+        self.assertIsNotNone(ad.severity_alert(run))
+
+    def test_quarantined_verdict_alerts(self):
+        run = make_run("acme", "2026-07-30", verdict="quarantined",
+                       no_findings=True,
+                       note="the findings document tripped secret_pii_scrub_gate")
+        msg = ad.severity_alert(run)
+        self.assertIsNotNone(msg)
+        self.assertIn("quarantined", msg)
+
+    def test_string_counts_do_not_crash_the_formatter(self):
+        # The run log is JSON written from a shell pipeline, so a count can
+        # arrive as a string. `%d` raises on one, which would take down the
+        # whole nightly digest render.
+        run = make_run("acme", "2026-07-30")
+        run["findings"] = {"critical": "2", "high": "0", "medium": 0, "low": 0}
+        msg = ad.severity_alert(run)
+        self.assertIsNotNone(msg)
+        self.assertIn("2 critical", msg)
+
     def test_many_mediums_never_escalate(self):
         # The whole point of the severity split: volume of Medium/Low never
         # crosses the line that only Critical/High (or blocked/failed) cross.
@@ -164,11 +200,35 @@ class TestRender(unittest.TestCase):
         self.assertIn("## Alerts (0)", text)
         self.assertIn("## Routine (0)", text)
 
+    def test_an_unparsed_run_never_renders_as_zero_counts(self):
+        write_run(self.tmp, make_run("acme", "2026-07-30", no_findings=True))
+        text = ad.render(self.tmp, None)
+        self.assertIn("## Alerts (1)", text)
+        self.assertIn("## Routine (0)", text)
+        self.assertNotIn("critical 0", text)
+
+    def test_a_nested_package_key_survives_into_the_digest(self):
+        # Real keys are workspace-relative paths, so a run log lands two
+        # levels under runs/. A single-level walk finds only the intermediate
+        # directory, which holds no JSON, and the package vanishes silently.
+        run = make_run("client-dir/acme", "2026-07-30", critical=1)
+        run_dir = pathlib.Path(self.tmp) / "audit" / "runs" / "client-dir" / "acme"
+        run_dir.mkdir(parents=True)
+        (run_dir / "2026-07-30.json").write_text(
+            json.dumps(run, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        text = ad.render(self.tmp, None)
+        self.assertIn("Total runs in window: 1", text)
+        self.assertIn("client-dir/acme", text)
+
     def test_generated_prose_passes_grammar_gate(self):
         write_run(self.tmp, make_run("acme", "2026-07-30", critical=1))
         write_run(self.tmp, make_run("widget", "2026-07-30", medium=3))
         write_run(self.tmp, make_run("gizmo", "2026-07-30", verdict="failed",
                                      no_findings=True, note="claude CLI not found"))
+        write_run(self.tmp, make_run("sprocket", "2026-07-30", no_findings=True))
+        write_run(self.tmp, make_run("cog", "2026-07-30", verdict="quarantined",
+                                     no_findings=True,
+                                     note="the findings document tripped the secret gate"))
         text = ad.render(self.tmp, None)
         findings = pg.lint_text(text)
         self.assertEqual(findings, [], findings)
@@ -193,6 +253,21 @@ class TestWriteDigest(unittest.TestCase):
         marker = pathlib.Path(self.tmp) / "audit" / "digests" / ".last-digest"
         self.assertTrue(marker.is_file())
         self.assertTrue(marker.read_text(encoding="utf-8").strip())
+
+    def test_the_digest_is_committed_to_the_store(self):
+        import audit_store as st
+
+        st.ensure_store(self.tmp)
+        write_run(self.tmp, make_run("acme", "2026-07-30", critical=1))
+        path = ad.write_digest(self.tmp)
+        tracked = subprocess.run(["git", "-C", self.tmp, "ls-files"],
+                                 capture_output=True, text=True).stdout.split()
+        rel = str(pathlib.Path(path).relative_to(self.tmp))
+        self.assertIn(rel, tracked)
+
+    def test_a_store_with_no_repo_still_gets_its_digest(self):
+        write_run(self.tmp, make_run("acme", "2026-07-30"))
+        self.assertTrue(pathlib.Path(ad.write_digest(self.tmp)).is_file())
 
     def test_second_call_windows_off_the_first(self):
         now = datetime.datetime.now(datetime.timezone.utc)

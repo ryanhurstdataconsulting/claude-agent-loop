@@ -15,12 +15,22 @@ Layout created by :func:`ensure_store`::
 
     <root>/
       .git/                  (no remote — see assert_no_remote)
-      .gitignore              (empty: the store tracks everything it holds)
+      .gitignore              (scoped: audit/ is tracked, the rest is not)
       audit/
         config.json           (tier schedule; hand-written, not by this tool)
         runs/
         findings/
         digests/
+        quarantine/           (findings documents held back from a client repo)
+        logs/                 (the nightly job's stdout/stderr; never tracked)
+
+The ``.gitignore`` is deliberately narrow rather than empty. ``root`` is the
+whole metrics tree — the resource loop's monthly JSONL shards, budget
+checkpoints, and caches are siblings of ``audit/`` — so an empty ignore file
+would leave every one of them untracked-but-not-ignored, and a single
+``git add -A`` run in that directory by a human or an agent would sweep the
+lot into a commit. Only ``audit/`` is tracked here; :func:`commit_paths` is
+the only writer, and it stages explicit paths, never ``-A``.
 
 Stdlib only — no third-party imports, so this tool has no install step and no
 supply-chain surface of its own.
@@ -33,6 +43,33 @@ import subprocess
 import sys
 
 SCHEMA = 1
+
+SUBDIRS = ("audit/runs", "audit/findings", "audit/digests",
+           "audit/quarantine", "audit/logs")
+
+# Committed by an unattended job, so the identity is fixed rather than
+# inherited: a machine with no `user.email` configured would otherwise fail
+# every store commit, and a machine that has one would stamp the owner's
+# personal identity onto an automated write.
+COMMIT_NAME = "claude-agent-loop"
+COMMIT_EMAIL = "claude-agent-loop@localhost"
+
+# Only `audit/` is tracked. See the module docstring for why an empty ignore
+# file was the wrong default: `root` is the whole metrics tree, and everything
+# else under it is transient working data that must never be committable by
+# accident. `audit/logs/` is excluded again underneath — the nightly job's raw
+# stdout is a rotating byproduct, not an artifact worth versioning.
+GITIGNORE = """\
+# Managed by audit_store.ensure_store — do not hand-edit.
+# The audit store is the only tracked family under this root. Everything else
+# here (the resource loop's monthly JSONL shards, budget checkpoints, caches)
+# is transient working data, kept ignored so a stray `git add -A` in this
+# directory can never sweep the whole metrics tree into a commit.
+/*
+!/.gitignore
+!/audit/
+/audit/logs/
+"""
 
 
 class StoreUnsafe(Exception):
@@ -57,18 +94,28 @@ def ensure_store(root):
     """Create the store layout under ``root`` and git-init it if needed.
 
     Idempotent: safe to call on every scheduler invocation. Creates
-    ``audit/{runs,findings,digests}``, writes an empty ``.gitignore`` (the
-    store tracks everything it holds — there is nothing to ignore), and runs
-    ``git init -q`` only when ``root/.git`` does not already exist. Returns a
-    status dict describing what was done.
+    ``audit/{runs,findings,digests,quarantine,logs}``, writes the scoped
+    ``.gitignore`` above, and runs ``git init -q`` only when ``root/.git``
+    does not already exist. Returns a status dict describing what was done.
+
+    The ``.gitignore`` is rewritten whenever its content differs from
+    :data:`GITIGNORE`, not merely when the file is absent. Earlier versions of
+    this function wrote an EMPTY ignore file, which left every sibling of
+    ``audit/`` untracked-but-not-ignored; a store created by one of those
+    still has that file on disk, and only an unconditional reconcile repairs
+    it. The file carries a "managed, do not hand-edit" header for that reason.
     """
     root = pathlib.Path(root)
-    for sub in ("audit/runs", "audit/findings", "audit/digests"):
+    for sub in SUBDIRS:
         os.makedirs(root / sub, exist_ok=True)
 
     gitignore = root / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text("")
+    try:
+        current = gitignore.read_text()
+    except OSError:
+        current = None
+    if current != GITIGNORE:
+        gitignore.write_text(GITIGNORE)
 
     git_dir = root / ".git"
     initialised = False
@@ -87,11 +134,91 @@ def ensure_store(root):
             )
         initialised = True
 
+    # Commit the ignore file itself, so the repo carries its own scope rather
+    # than leaving the one file that defines it sitting untracked forever, and
+    # the tier schedule alongside it — `config.json` is hand-written and is
+    # exactly the kind of file whose edit history is worth having. Both are
+    # skipped when unchanged or absent, so this stays idempotent.
+    commit_paths(root, [".gitignore", "audit/config.json"],
+                 "audit(store): record the store's scope and tier schedule")
+
     return {
         "root": str(root),
         "created": True,
         "git_initialised": initialised,
     }
+
+
+def commit_paths(root, paths, message):
+    """Stage ``paths`` inside the store and commit them. Return the SHA or ``None``.
+
+    This is what makes the store's git history real rather than decorative:
+    ``ensure_store`` initialises the repo, and every tool that writes an
+    artifact — ``audit_run.sh`` for a run log or a quarantined findings
+    document, :func:`audit_digest.write_digest` for a digest — calls this
+    immediately afterwards, so each night's output has a recoverable, versioned
+    home instead of sitting untracked forever.
+
+    Three properties, each deliberate:
+
+    * **Explicit paths, never** ``git add -A``. Only what the caller just wrote
+      is staged, so an unrelated file sitting in the tree can never ride along.
+      A path outside ``root``, or one that does not exist, is dropped rather
+      than staged.
+    * **Never pushes.** The store has no remote and must never gain one — see
+      :func:`assert_no_remote`. There is no push code path here to disable.
+    * **Never fatal.** Any failure — no repo, nothing staged, a git error —
+      returns ``None``. The artifact is already on disk; a missed commit is a
+      far smaller problem than a nightly sweep that aborts over one.
+
+    ``--no-verify`` and ``commit.gpgsign=false`` are set because this runs
+    unattended: a hook or a GPG passphrase prompt would hang the job.
+    """
+    root = pathlib.Path(root)
+    if not (root / ".git").exists():
+        return None
+
+    rel = []
+    for raw in paths or ():
+        candidate = pathlib.Path(raw)
+        if candidate.is_absolute():
+            try:
+                candidate = candidate.relative_to(root)
+            except ValueError:
+                continue  # outside the store — never stage it
+        if not (root / candidate).exists():
+            continue
+        rel.append(str(candidate))
+    if not rel:
+        return None
+
+    base = ["git", "-C", str(root)]
+    try:
+        added = subprocess.run(base + ["add", "--"] + rel,
+                               capture_output=True, text=True)
+        if added.returncode != 0:
+            return None
+        pending = subprocess.run(base + ["diff", "--cached", "--quiet"],
+                                 capture_output=True, text=True)
+        if pending.returncode == 0:
+            return None  # nothing staged differs from HEAD
+        committed = subprocess.run(
+            base + [
+                "-c", "user.name=" + COMMIT_NAME,
+                "-c", "user.email=" + COMMIT_EMAIL,
+                "-c", "commit.gpgsign=false",
+                "commit", "-q", "--no-verify", "-m", message,
+            ],
+            capture_output=True, text=True,
+        )
+        if committed.returncode != 0:
+            return None
+        head = subprocess.run(base + ["rev-parse", "HEAD"],
+                              capture_output=True, text=True)
+    except OSError:
+        return None
+
+    return head.stdout.strip() or None
 
 
 def assert_no_remote(root):
@@ -232,10 +359,21 @@ def main(argv=None):
         help="store root (default: %s)" % store_root(),
     )
     parser.add_argument(
+        "--message",
+        default="audit(store): record artifacts",
+        help="commit message for the 'commit' action",
+    )
+    parser.add_argument(
         "action",
-        choices=("ensure", "check"),
+        choices=("ensure", "check", "commit"),
         help="'ensure' creates the layout and git repo; "
-        "'check' verifies no-remote and prints the loaded config",
+        "'check' verifies no-remote and prints the loaded config; "
+        "'commit' stages the given paths and commits them to the store",
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        help="for 'commit': the artifact paths to stage, inside the store",
     )
     args = parser.parse_args(argv)
     root = args.root or store_root()
@@ -243,6 +381,12 @@ def main(argv=None):
     if args.action == "ensure":
         status = ensure_store(root)
         print(json.dumps(status, sort_keys=True))
+        return 0
+
+    if args.action == "commit":
+        sha = commit_paths(root, args.paths, args.message)
+        if sha:
+            print(sha)
         return 0
 
     # action == "check"
