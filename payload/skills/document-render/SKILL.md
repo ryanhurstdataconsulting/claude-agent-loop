@@ -1,6 +1,6 @@
 ---
 name: document-render
-description: Use when rendering a markdown deliverable to PDF (reports, leadership briefs, legal contracts) or converting a generated .pptx / .docx deck to PDF or per-slide images for QA. Carries the canonical pandoc + WeasyPrint toolchain and the headless-LibreOffice deck path, with every gotcha already rediscovered on this engagement. Triggers include mojibake in a rendered PDF (â€œ / â€™ for smart quotes), $-delimited text vanishing from a table cell, a duplicated document title, a hung macOS headless Chrome, a "which interpreter has weasyprint vs reportlab" probe, or a Keynote/PowerPoint automation failure with no GUI-free fallback.
+description: Use when rendering a markdown deliverable to PDF (reports, leadership briefs, legal contracts) or converting a generated .pptx / .docx deck to PDF or per-slide images for QA. Carries the canonical pandoc + WeasyPrint toolchain and the headless-LibreOffice deck path, with every gotcha already rediscovered on this engagement. Triggers include mojibake in a rendered PDF (â€œ / â€™ for smart quotes), $-delimited text vanishing from a table cell, a duplicated document title, a hung macOS headless Chrome, a "which interpreter has weasyprint vs reportlab" probe, a Keynote/PowerPoint automation failure with no GUI-free fallback, a Mermaid diagram rendering as blank/textless colored shapes, or a table row's content splitting oddly across a page boundary.
 ---
 
 # document-render
@@ -18,7 +18,7 @@ through **one of two toolchains**:
    PowerPoint automation is unavailable.
 
 This toolchain was independently rediscovered at least four times across the
-portfolio, re-hitting the same five gotchas each time. This skill is the single
+portfolio, re-hitting the same gotchas each time. This skill is the single
 canonical reference so it is never re-derived again. Copy-paste recipes, a
 minimal paged-media CSS stub, and the post-render verifier live in
 [`references/render-recipes.md`](references/render-recipes.md).
@@ -125,6 +125,58 @@ what is installed. This machine has **no DejaVu family staged**, so any CSS
 reference it in the stylesheet, or point the CSS `font-family` at a font you have
 confirmed is present. Pin the font in the stylesheet rather than relying on the
 WeasyPrint default so the same input renders identically on every machine.
+
+### Gotcha 6 — Mermaid diagrams render as blank, textless colored boxes
+
+**Symptom:** a Mermaid flowchart pre-rendered to SVG (via `mmdc`,
+`@mermaid-js/mermaid-cli`) and embedded as an `<img>` shows correctly shaped,
+correctly colored nodes and arrows in the PDF — but every node is **empty, with
+no label text at all**. This happens with Mermaid's default config
+(`htmlLabels: true`, which wraps labels in `<foreignObject>`) — WeasyPrint's SVG
+engine (CairoSVG) does not support `<foreignObject>`, so the HTML-in-SVG label
+never renders. It **also** happens with `flowchart: { htmlLabels: false }`
+(forcing pure SVG `<text>`): at least one `@mermaid-js/mermaid-cli` version
+emits a `<text><tspan .../></text>` with the `tspan` **self-closing and empty**
+regardless of plain-string or backtick/markdown-string node labels — a rendering
+bug in that version's non-HTML text layout path, not a WeasyPrint limitation.
+Confirm which failure mode you're hitting with:
+`grep -c foreignObject FILE.svg` (foreignObject path) vs.
+`python3 -c "import re; print(re.findall(r'<text.*?</text>', open('FILE.svg').read(), re.DOTALL)[:2])"`
+(shows empty `tspan`s if it's the second bug).
+
+**Root cause:** two independent, stacking incompatibilities between
+Mermaid-CLI's SVG output and CairoSVG — there is no single flag that fixes both.
+
+**Fix:** don't round-trip diagrams through Mermaid for a WeasyPrint-rendered
+PDF at all. Hand-author the diagram as plain HTML/CSS (a flexbox row of styled
+`<div>` "nodes" with arrow characters or small CSS connectors between them) and
+inline it directly in the markdown/HTML source. This renders through the exact
+same, already-proven CSS pipeline as the rest of the document — no external
+tool, no headless-browser dependency, no font/text-layout risk. For a linear
+cause → effect → impact narrative (the common case in an audit/incident report),
+3–5 boxes in a `flex-wrap: wrap` row reads as well as a real flowchart and is
+far more robust. Reserve real Mermaid/Graphviz rendering for contexts that
+render it live in-browser (an Artifact, a Markdown viewer with native Mermaid
+support) — never for a WeasyPrint PDF pipeline.
+
+### Gotcha 7 — a table row's cells split across a page boundary
+
+**Symptom:** in a multi-page table, one row's content (e.g., a styled
+`<span class="pill">` badge) goes missing on the page where the row starts,
+then reappears alone — stripped of its sibling cells — at the top of the next
+page.
+
+**Root cause:** WeasyPrint will break a table row across a page if the row
+doesn't fit in the remaining space, by default. A cell containing an inline
+block-ish element (a padded/bordered `span`, in this case) can end up visually
+orphaned by the split.
+
+**Fix:** add `break-inside: avoid;` to the table's `tr` (and to any other
+repeating card-like block you don't want split — a "finding" card, a flow
+diagram row): `table.summary tr { break-inside: avoid; }`. Verify by rendering
+the page straddling a table's row count and eyeballing it (text-only
+`pdftotext` extraction won't catch this — it's a layout defect, not a text
+defect).
 
 ## Path 2 — `.pptx` / `.docx` → PDF or images (headless LibreOffice)
 
