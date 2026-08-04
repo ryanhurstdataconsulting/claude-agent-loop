@@ -22,7 +22,7 @@
 # install.sh v2 (P1) is the sole consumer of this file: it walks these lines
 # and builds/repairs the symlink + copy-if-absent state on every run.
 
-# --- skills/ (172 dirs) + catalog --------------------------------------
+# --- skills/ (179 dirs) + catalog --------------------------------------
 link-dir skills/ab-test-design-and-power-analysis
 link-dir skills/accessibility-audit
 link-dir skills/accessibility-test-audit
@@ -139,6 +139,7 @@ link-dir skills/predictive-model-baseline-to-iterate
 link-dir skills/prioritize-with-rice
 link-dir skills/profile-and-fix-slow-request
 link-dir skills/progressive-delivery-rollout
+link-dir skills/productionization
 link-dir skills/prompt-regression-testing
 link-dir skills/prose-style-lint
 link-dir skills/quickstart-tutorial-generator
@@ -195,10 +196,25 @@ link-dir skills/write-openapi-spec-and-contract-tests
 link-dir skills/write-peripheral-driver-with-hil-test
 link-dir skills/write-unit-tests-with-coverage-target
 link-dir skills/yagni-ladder
+# vendored offensive-security framework (claude-pentest, MIT — see
+# skills/pentest/UPSTREAM.md). Kept as a contiguous block so the vendored set
+# stays visible; the installer processes lines in order, not alphabetically.
+link-dir skills/pentest
+link-dir skills/authenticating
+link-dir skills/common-appsec-patterns
+link-dir skills/cve-testing
+link-dir skills/domain-assessment
+link-dir skills/web-application-mapping
+link-dir skills/mks
 link-file skills/CATALOG.md
 # --- agents/ ------------------------------------------------------------------
 link-file agents/sql-safety-reviewer.md
 link-dir agents/roles
+link-dir agents/pentest
+
+# --- commands/ ------------------------------------------------------------------
+# vendored claude-pentest slash commands; subdir namespacing → /pentest:<name>
+link-dir commands/pentest
 
 # --- hooks/ ---------------------------------------------------------------
 link-file hooks/inject-resource-loop.sh
@@ -209,6 +225,7 @@ link-file hooks/context-budget.sh
 link-file hooks/usage-budget.sh
 link-file hooks/read-guard.sh
 link-file hooks/workorder-gate.sh
+link-file hooks/prompt-clarity-gate.sh
 link-file hooks/pipeline-relay.sh
 link-file hooks/loop-close.sh
 
@@ -258,7 +275,7 @@ link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
 # --- templates/ (copied into a target repo by hand, never auto-installed) ----
 link-dir templates
 
-# --- registry/guides/ (38 guides + template) --------------------------------
+# --- registry/guides/ (39 guides + template) --------------------------------
 link-file registry/guides/_TEMPLATE.md
 link-file registry/guides/assess-task.md
 link-file registry/guides/audit-digest.md
@@ -283,7 +300,9 @@ link-file registry/guides/lint-roles.md
 link-file registry/guides/loop-contribute.md
 link-file registry/guides/machine-prose-grammar-gate.md
 link-file registry/guides/make-brief.md
+link-file registry/guides/pentest.md
 link-file registry/guides/plan-task.md
+link-file registry/guides/productionization.md
 link-file registry/guides/playwright.md
 link-file registry/guides/postgres-readonly.md
 link-file registry/guides/repo-audit-action.md

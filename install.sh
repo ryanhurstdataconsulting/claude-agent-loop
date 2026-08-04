@@ -517,6 +517,17 @@ cat <<'STEPS'
       if the database is remote (ssh-tunnel-keepalive), and register the server
       per  payload/mcp-specs/postgres-readonly.md . The install ships NO secrets.
 
+   6. OPTIONAL - the prompt-clarity-gate hook restructures long/noisy prompts,
+      and asks a clarifying question when a request is genuinely ambiguous. It
+      reads an Anthropic API key from  ~/.claude/secrets.env  (machine-wide -
+      NOT a project's secrets.env, which is a different file):
+         echo 'ANTHROPIC_API_KEY=sk-ant-...' >> ~/.claude/secrets.env
+         chmod 600 ~/.claude/secrets.env
+      Leave it unset and the hook fails open: silent, never blocking. Calls are
+      billed to your own account and fire only on prompts that clear a length
+      or noise bar, or that you prefix with "clean:". Prefix "raw:" to force a
+      skip.
+
    To undo everything, run:  bash uninstall.sh
    (add --restore-backups to also restore settings.json / CLAUDE.md from the
    one-time .bak-agentloop copies).
