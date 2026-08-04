@@ -1,0 +1,37 @@
+# productionization-intake.yaml
+# Copy this file to the target project's root, rename it without the
+# leading path, and fill in every field. Leave a field explicitly blank
+# rather than guessing — Phase 1 (Inventory) should ask the project owner
+# for anything it cannot determine from the code itself.
+service:
+  name: ""
+  owner: ""
+  business_criticality: low | medium | high
+runtime:
+  language: ""
+  version: ""
+  framework: ""
+  package_manager: ""
+  command: ""
+interfaces:
+  type: api | web | worker | cli | hybrid
+  listen_port: null
+  public_ingress: false
+  authn_authz: ""
+state:
+  databases: []
+  queues: []
+  object_storage: []
+  third_party_apis: []
+deployment:
+  target: ecs-fargate | ecs-ec2 | ec2 | other
+  aws_account_environment: ""
+  region: ""
+security:
+  data_classification: public | internal | confidential | regulated
+  secrets_source: ""
+  security_test_authorization: not-authorized | local-only | approved
+release:
+  availability_target: ""
+  rollback_owner: ""
+  change_approver: ""

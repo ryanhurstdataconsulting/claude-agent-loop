@@ -99,6 +99,14 @@
             "command": "$HOME/.claude/hooks/workorder-gate.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/prompt-clarity-gate.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [

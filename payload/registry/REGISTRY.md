@@ -20,6 +20,7 @@
 | tauri-desktop-dev | skill | Building/debugging a Tauri 2 desktop app or packaging a Python/FastAPI backend as a Tauri sidecar |
 | pentest | skill | Authorized penetration testing / security assessment — recon → attack-surface → executor fan-out → report, 63 attack categories. Authorization-gated; full engagements run from the main session via /pentest:pentest (routed through the security-engineer role) |
 | skill-library | skill | Role-based skill library — 157 generic skills across 33 tech-org families (product → DB → ML/AI → UI). Browse skills/CATALOG.md, then invoke a specific skill by name |
+| productionization | skill | Convert a project into a deployable app/ package via 7 phases (inventory, reference research, hardening, infra, security, QA/release, ops), dispatching existing role agents — no new subagents created |
 
 ## Agents
 | sql-safety-reviewer | agent | Dispatch before every production-database query — SAFE / NOT SAFE verdict (read-only wrapper present, no DDL/DML) |

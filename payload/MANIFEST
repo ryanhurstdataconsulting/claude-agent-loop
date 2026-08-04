@@ -139,6 +139,7 @@ link-dir skills/predictive-model-baseline-to-iterate
 link-dir skills/prioritize-with-rice
 link-dir skills/profile-and-fix-slow-request
 link-dir skills/progressive-delivery-rollout
+link-dir skills/productionization
 link-dir skills/prompt-regression-testing
 link-dir skills/prose-style-lint
 link-dir skills/quickstart-tutorial-generator
@@ -224,6 +225,7 @@ link-file hooks/context-budget.sh
 link-file hooks/usage-budget.sh
 link-file hooks/read-guard.sh
 link-file hooks/workorder-gate.sh
+link-file hooks/prompt-clarity-gate.sh
 link-file hooks/pipeline-relay.sh
 link-file hooks/loop-close.sh
 
@@ -300,6 +302,7 @@ link-file registry/guides/machine-prose-grammar-gate.md
 link-file registry/guides/make-brief.md
 link-file registry/guides/pentest.md
 link-file registry/guides/plan-task.md
+link-file registry/guides/productionization.md
 link-file registry/guides/playwright.md
 link-file registry/guides/postgres-readonly.md
 link-file registry/guides/repo-audit-action.md
