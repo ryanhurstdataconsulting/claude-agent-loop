@@ -83,12 +83,12 @@ out="$(run s8 "build a new dashboard" WORKORDER_GATE_DISABLE=1)"; rc=$?
   || die "8 kill switch failed (rc=$rc out=$out)"
 
 # 9. Malformed hook JSON -> fails open, silent, exit 0.
-out="$(printf '{not json' | env TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/metrics" bash "$HOOK")"; rc=$?
+out="$(printf '{not json' | env TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/metrics" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && pass "9 malformed JSON: fails open" \
   || die "9 malformed JSON (rc=$rc out=$out)"
 
 # 10. Empty stdin -> fails open, silent, exit 0.
-out="$(printf '' | env TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/metrics" bash "$HOOK")"; rc=$?
+out="$(printf '' | env TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/metrics" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && pass "10 empty stdin: fails open" \
   || die "10 empty stdin (rc=$rc out=$out)"
 

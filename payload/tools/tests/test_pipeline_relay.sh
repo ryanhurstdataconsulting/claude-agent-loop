@@ -109,18 +109,18 @@ out="$(run s11 Skill superpowers:brainstorming PIPELINE_RELAY_DISABLE=1)"; rc=$?
   || die "11 kill switch failed (rc=$rc out=$out)"
 
 # 12. Malformed JSON -> fails open.
-out="$(printf '{not json' | env METRICS_DIR="$TMP/metrics" bash "$HOOK")"; rc=$?
+out="$(printf '{not json' | env METRICS_DIR="$TMP/metrics" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && pass "12 malformed JSON: fails open" \
   || die "12 malformed JSON (rc=$rc out=$out)"
 
 # 13. Empty stdin -> fails open.
-out="$(printf '' | env METRICS_DIR="$TMP/metrics" bash "$HOOK")"; rc=$?
+out="$(printf '' | env METRICS_DIR="$TMP/metrics" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && pass "13 empty stdin: fails open" \
   || die "13 empty stdin (rc=$rc out=$out)"
 
 # 14. Missing tool_input -> fails open, no crash.
 out="$(printf '{"tool_name":"Skill","session_id":"s14"}' \
-  | env METRICS_DIR="$TMP/metrics" bash "$HOOK")"; rc=$?
+  | env METRICS_DIR="$TMP/metrics" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && pass "14 missing tool_input: fails open" \
   || die "14 missing tool_input (rc=$rc out=$out)"
 
