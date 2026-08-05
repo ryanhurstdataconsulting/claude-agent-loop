@@ -20,9 +20,11 @@
 # sizing run in Python, which is bash-version-independent.
 set -u
 
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+TOOLS_DIR="${TOOLS_DIR:-$CLAUDE_DIR/tools}"
 INPUT="$(cat 2>/dev/null || true)"
 
-READ_GUARD_INPUT="$INPUT" python3 <<'PY' || true
+READ_GUARD_INPUT="$INPUT" TOOLS_DIR="$TOOLS_DIR" python3 <<'PY' || true
 import json
 import os
 import sys
@@ -35,6 +37,13 @@ try:
         payload = {}
 except Exception:
     payload = {}
+
+session_id = payload.get("session_id") or "unknown"
+sys.path.insert(0, os.environ.get("TOOLS_DIR", ""))
+try:
+    import obs_emit
+except Exception:
+    obs_emit = None
 
 LINE_CAP = 1000
 BYTE_CAP = 100 * 1024  # 100 KB
@@ -85,6 +94,12 @@ def is_large(file_path):
 
 
 def allow(context=None):
+    if obs_emit is not None:
+        try:
+            obs_emit.emit("gate.decision", session_id=session_id,
+                           gate="read-guard", action="inject" if context else "silent")
+        except Exception:
+            pass
     hook = {"hookEventName": "PreToolUse", "permissionDecision": "allow"}
     if context:
         hook["additionalContext"] = context
@@ -92,6 +107,12 @@ def allow(context=None):
 
 
 def deny(reason):
+    if obs_emit is not None:
+        try:
+            obs_emit.emit("gate.decision", session_id=session_id,
+                           gate="read-guard", action="deny")
+        except Exception:
+            pass
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

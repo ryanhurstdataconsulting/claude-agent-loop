@@ -47,10 +47,20 @@ import sys
 import time
 
 sys.path.insert(0, os.environ.get("TOOLS_DIR", ""))
+try:
+    import obs_emit
+except Exception:
+    obs_emit = None
 
 
-def bail():
+def bail(action="silent", score=None):
     """Silence is a valid answer. The hook never blocks a prompt."""
+    if obs_emit is not None:
+        try:
+            obs_emit.emit("gate.decision", session_id=session_id,
+                           gate="workorder", action=action, score=score)
+        except Exception:
+            pass
     try:
         sys.stdout.flush()
     except Exception:
@@ -137,7 +147,7 @@ sys.stdout.write(json.dumps({
         "additionalContext": directive,
     }
 }))
-bail()
+bail(action="inject", score=score)
 PY
 
 exit 0
