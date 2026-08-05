@@ -6,9 +6,12 @@
 #
 # tool.pre/tool.post pairing: prefers tool_use_id (confirmed present on both
 # PreToolUse and PostToolUse payloads). Falls back to a per-session
-# (tool_name, sequence) counter, stored in
+# (tool_name, sequence) counter plus a per-tool_name FIFO queue, stored in
 # $CLAUDE_DIR/metrics/state/obs-events/<session>.json, when tool_use_id is
-# ever absent.
+# ever absent — PostToolUse dequeues the OLDEST pending key for that
+# tool_name rather than re-reading the current counter value, so overlapping
+# calls to the same tool (pre1, pre2, ... before any post) still pair
+# post-to-pre in call order instead of every post colliding on the latest key.
 set -u
 
 [ "${OBS_EVENTS_DISABLE:-0}" = "1" ] && exit 0
@@ -83,7 +86,7 @@ def _state_path():
 
 
 def _load_state(path):
-    default = {"seq": {}, "pending": {}}
+    default = {"seq": {}, "pending": {}, "pending_queue": {}}
     if not path:
         return default
     try:
@@ -93,6 +96,7 @@ def _load_state(path):
             return default
         st.setdefault("seq", {})
         st.setdefault("pending", {})
+        st.setdefault("pending_queue", {})
         return st
     except Exception:
         return default
@@ -120,6 +124,7 @@ try:
             seq = int(state["seq"].get(tool_name, 0)) + 1
             state["seq"][tool_name] = seq
             pairing_key = "%s:%s:%d" % (session_id, tool_name, seq)
+            state["pending_queue"].setdefault(tool_name, []).append(pairing_key)
         state["pending"][pairing_key] = datetime.datetime.now(
             datetime.timezone.utc).isoformat()
         _save_state(state_path, state)
@@ -133,8 +138,11 @@ try:
         if tool_use_id:
             pairing_key = str(tool_use_id)
         else:
-            seq = int(state["seq"].get(tool_name, 0))
-            pairing_key = "%s:%s:%d" % (session_id, tool_name, seq)
+            queue = state["pending_queue"].setdefault(tool_name, [])
+            if queue:
+                pairing_key = queue.pop(0)
+            else:
+                pairing_key = "%s:%s:0" % (session_id, tool_name)
         pre_ts = state["pending"].pop(pairing_key, None)
         _save_state(state_path, state)
         duration_ms = None

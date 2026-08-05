@@ -75,6 +75,32 @@ else
   die "5 fallback pairing failed (pre=$pre_span post=$post_span)"
 fi
 
+# 5b. Overlapping fallback pairing: pre1, pre2 (same session/tool_name, no
+#     tool_use_id) both fire before either post. FIFO pairing requires
+#     post1 -> pre1's span_id and post2 -> pre2's span_id, not "post reads
+#     whatever the counter currently holds" (which would wrongly pair
+#     post1 with pre2).
+payload5bpre1='{"hook_event_name":"PreToolUse","session_id":"s6","tool_name":"Grep","tool_input":{"pattern":"a"}}'
+run "$payload5bpre1" >/dev/null
+payload5bpre2='{"hook_event_name":"PreToolUse","session_id":"s6","tool_name":"Grep","tool_input":{"pattern":"b"}}'
+run "$payload5bpre2" >/dev/null
+payload5bpost1='{"hook_event_name":"PostToolUse","session_id":"s6","tool_name":"Grep","tool_input":{"pattern":"a"},"tool_response":{"isError":false}}'
+run "$payload5bpost1" >/dev/null
+payload5bpost2='{"hook_event_name":"PostToolUse","session_id":"s6","tool_name":"Grep","tool_input":{"pattern":"b"},"tool_response":{"isError":false}}'
+run "$payload5bpost2" >/dev/null
+recs="$(last_records)"
+pre_spans="$(echo "$recs" | grep '"event":"tool.pre"' | grep '"session_id":"s6"' | python3 -c "import json,sys; [print(json.loads(l)['span_id']) for l in sys.stdin if l.strip()]" 2>/dev/null)"
+post_spans="$(echo "$recs" | grep '"event":"tool.post"' | grep '"session_id":"s6"' | python3 -c "import json,sys; [print(json.loads(l)['span_id']) for l in sys.stdin if l.strip()]" 2>/dev/null)"
+pre1_span="$(echo "$pre_spans" | sed -n '1p')"
+pre2_span="$(echo "$pre_spans" | sed -n '2p')"
+post1_span="$(echo "$post_spans" | sed -n '1p')"
+post2_span="$(echo "$post_spans" | sed -n '2p')"
+if [ -n "$pre1_span" ] && [ "$pre1_span" = "$post1_span" ] && [ -n "$pre2_span" ] && [ "$pre2_span" = "$post2_span" ]; then
+  pass "5b overlapping fallback pairing: post1->pre1, post2->pre2 (FIFO)"
+else
+  die "5b overlapping fallback pairing failed (pre1=$pre1_span post1=$post1_span pre2=$pre2_span post2=$post2_span)"
+fi
+
 # 6. Malformed stdin JSON -> silent, still exits 0.
 out="$(printf '%s' '{not json' | env CLAUDE_DIR="$TMP/claude" TOOLS_DIR="$TOOLS" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "6 malformed input: exit 0" || die "6 exit $rc"
