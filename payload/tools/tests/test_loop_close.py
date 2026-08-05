@@ -147,7 +147,11 @@ class TestCloseOne(TempCase):
         w = wo(statuses=("done", "done"))
         s = lc.close_one(w, self.metrics, self.projects)
         self.assertEqual(s["parts"], 2)
-        self.assertEqual(len(self.shard_rows()), 2)
+        rows = self.shard_rows()
+        task_rows = [r for r in rows if r["kind"] == "task"]
+        run_rows = [r for r in rows if r["kind"] == "run"]
+        self.assertEqual(len(task_rows), 2)
+        self.assertEqual(len(run_rows), 2)
         self.assertTrue(w.get("closed_at"))
 
     def test_dry_run_emits_nothing_and_does_not_stamp(self):
@@ -191,6 +195,88 @@ class TestReadyScan(TempCase):
         pt.save(self.state, wo(plan_id="wo-ok", statuses=("done",)))
         ids = [w["plan_id"] for w in lc.ready_work_orders(self.state)]
         self.assertEqual(ids, ["wo-ok"])
+
+
+class TestRunRecordsSubagent(unittest.TestCase):
+    """kind:"run" (subagent) emission — Phase 2."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.metrics_dir = pathlib.Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _shard_lines(self):
+        shards = list(self.metrics_dir.glob("*.jsonl"))
+        self.assertEqual(len(shards), 1)
+        return [json.loads(l) for l in shards[0].read_text().splitlines() if l.strip()]
+
+    def test_one_run_record_per_part_success(self):
+        w = wo(plan_id="wo-1", statuses=("done",))
+        w["parts"][0]["agent_task_id"] = "agent-aaa"
+        w["parts"][0]["verdict"] = "clean"
+        w["parts"][0]["evidence"] = {"tests_detected": True, "tests_passed": 5,
+                                      "tests_failed": 0, "commits": 1}
+        records = lc.run_records(w)
+        self.assertEqual(len(records), 1)
+        rec = records[0]
+        self.assertEqual(rec["schema"], "run.v1")
+        self.assertEqual(rec["kind"], "run")
+        self.assertEqual(rec["run_kind"], "subagent")
+        self.assertEqual(rec["task_id"], "agent-aaa")
+        self.assertEqual(rec["outcome"], "success")
+        self.assertEqual(rec["stop_reason"], "completed")
+        self.assertEqual(rec["plan_id"], "wo-1")
+        self.assertEqual(rec["part_id"], "p1")
+        self.assertIsNone(rec["parent_task_id"])
+        self.assertIsInstance(rec["trace_id"], str)
+        self.assertEqual(len(rec["trace_id"]), 32)
+
+    def test_outcome_failure_on_test_failures(self):
+        w = wo(plan_id="wo-1", statuses=("done",))
+        w["parts"][0]["agent_task_id"] = "agent-bbb"
+        w["parts"][0]["verdict"] = "dirty"
+        w["parts"][0]["evidence"] = {"tests_detected": True, "tests_passed": 2,
+                                      "tests_failed": 3}
+        rec = lc.run_records(w)[0]
+        self.assertEqual(rec["outcome"], "failure")
+
+    def test_outcome_partial_on_soft_dirty_signal_only(self):
+        w = wo(plan_id="wo-1", statuses=("done",))
+        w["parts"][0]["agent_task_id"] = "agent-ccc"
+        w["parts"][0]["verdict"] = "dirty"
+        w["parts"][0]["evidence"] = {"followup_fixes": 1}
+        rec = lc.run_records(w)[0]
+        self.assertEqual(rec["outcome"], "partial")
+
+    def test_outcome_partial_on_unknown_verdict(self):
+        w = wo(plan_id="wo-1", statuses=("done",))
+        w["parts"][0]["agent_task_id"] = "agent-ddd"
+        w["parts"][0]["verdict"] = "unknown"
+        w["parts"][0]["evidence"] = {}
+        rec = lc.run_records(w)[0]
+        self.assertEqual(rec["outcome"], "partial")
+
+    def test_trace_id_matches_obs_emit_for_same_plan_id(self):
+        import obs_emit
+        w = wo(plan_id="wo-shared", statuses=("done",))
+        w["parts"][0]["agent_task_id"] = "agent-eee"
+        w["parts"][0]["verdict"] = "clean"
+        w["parts"][0]["evidence"] = {}
+        rec = lc.run_records(w)[0]
+        self.assertEqual(rec["trace_id"], obs_emit.trace_id_for("wo-shared"))
+
+    def test_emit_writes_run_records_into_shard(self):
+        w = wo(plan_id="wo-1", statuses=("done",))
+        w["parts"][0]["agent_task_id"] = "agent-fff"
+        w["parts"][0]["verdict"] = "clean"
+        w["parts"][0]["evidence"] = {}
+        records = lc.task_records(w) + lc.run_records(w)
+        lc.emit(str(self.metrics_dir), records)
+        lines = self._shard_lines()
+        kinds = sorted(r["kind"] for r in lines)
+        self.assertEqual(kinds, ["run", "task"])
 
 
 class TestNoDoubleCount(TempCase):

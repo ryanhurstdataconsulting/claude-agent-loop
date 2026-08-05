@@ -36,6 +36,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import assess_task  # noqa: E402
+import obs_emit  # noqa: E402
 import plan_task  # noqa: E402
 
 SCHEMA = 1
@@ -153,6 +154,43 @@ def task_records(wo):
     return out
 
 
+def run_records(wo):
+    """One kind:"run" (subagent) record per part — a derived outcome/stop_reason
+    summary, never asserted. See the Phase 2 plan's design decision #2 for the
+    outcome-severity mapping; stop_reason is always "completed" here because no
+    process-level signal (CLI exit code, interrupt flag) exists at the part
+    level — a documented limitation, not a guess dressed up as data.
+    """
+    out = []
+    now = _now_iso()
+    for part in wo.get("parts") or []:
+        ev = part.get("evidence") or {}
+        verdict = part.get("verdict") or "unknown"
+        hard_failure = (ev.get("tests_failed") or 0) > 0 or (ev.get("reverts") or 0) > 0
+        if verdict == "clean":
+            outcome = "success"
+        elif verdict == "dirty" and hard_failure:
+            outcome = "failure"
+        else:
+            outcome = "partial"
+        task_id = part.get("agent_task_id") or "%s-%s" % (wo.get("plan_id"), part.get("part_id"))
+        out.append({
+            "schema": "run.v1",
+            "kind": "run",
+            "task_id": task_id,
+            "run_kind": "subagent",
+            "parent_task_id": None,
+            "outcome": outcome,
+            "stop_reason": "completed",
+            "trace_id": obs_emit.trace_id_for(wo.get("plan_id") or "unknown"),
+            "plan_id": wo.get("plan_id"),
+            "part_id": part.get("part_id"),
+            "ts_start": wo.get("created"),
+            "ts_end": now,
+        })
+    return out
+
+
 def emit(metrics_dir, records):
     """Append records to their monthly shard. O_APPEND, one write per line."""
     if not records:
@@ -171,7 +209,7 @@ def close_one(wo, metrics_dir, projects_dir, repo=None, dry_run=False):
     """Link, assess, emit, and stamp. Returns a summary dict."""
     linked = link(wo, projects_dir)
     assess_task.assess(wo, metrics_dir, repo=repo)
-    records = task_records(wo)
+    records = task_records(wo) + run_records(wo)
     verdicts = {}
     for part in wo.get("parts") or []:
         v = part.get("verdict") or "unknown"
@@ -179,7 +217,7 @@ def close_one(wo, metrics_dir, projects_dir, repo=None, dry_run=False):
     if not dry_run:
         emit(metrics_dir, records)
         wo["closed_at"] = _now_iso()
-    return {"plan_id": wo.get("plan_id"), "parts": len(records),
+    return {"plan_id": wo.get("plan_id"), "parts": len(wo.get("parts") or []),
             "linked": linked, "verdicts": verdicts, "records": records}
 
 

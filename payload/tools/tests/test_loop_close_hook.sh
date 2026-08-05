@@ -59,15 +59,18 @@ out="$(run_hook sess-1)"; rc=$?
 [ $rc -eq 0 ] && pass "1 exit 0" || die "1 exit $rc"
 [ -z "$out" ] && pass "1 silent on stdout" || die "1 not silent (got: $out)"
 n="$(count_records)"
-[ "$n" = "2" ] && pass "1 emitted 2 task records" || die "1 emitted $n, expected 2"
+[ "$n" = "4" ] && pass "1 emitted 4 records (2 task + 2 run)" || die "1 emitted $n, expected 4"
 
 # 2. Records carry precise work-order attribution.
 if python3 -c "
 import glob,json,sys
 recs=[json.loads(l) for f in glob.glob('$METRICS/*.jsonl') for l in open(f) if l.strip()]
-assert all(r['resources_source']=='workorder' for r in recs), 'wrong source'
-assert all(r['kind']=='task' for r in recs), 'wrong kind'
-assert any('dba' in r['resources_deployed'] for r in recs), 'role missing'
+task_recs = [r for r in recs if r['kind'] == 'task']
+run_recs = [r for r in recs if r['kind'] == 'run']
+assert len(task_recs) == 2, 'expected 2 task records, got %d' % len(task_recs)
+assert len(run_recs) == 2, 'expected 2 run records, got %d' % len(run_recs)
+assert all(r['resources_source']=='workorder' for r in task_recs), 'wrong source'
+assert any('dba' in r['resources_deployed'] for r in task_recs), 'role missing'
 " 2>/dev/null; then pass "2 records are precise and task-shaped"
 else die "2 record shape wrong"; fi
 
@@ -83,7 +86,7 @@ then pass "3 work order stamped closed"; else die "3 not stamped"; fi
 # 5. Re-running closes nothing further — no double count.
 run_hook sess-1b >/dev/null
 n2="$(count_records)"
-[ "$n2" = "2" ] && pass "5 no double count" || die "5 record count grew to $n2"
+[ "$n2" = "4" ] && pass "5 no double count" || die "5 record count grew to $n2"
 
 # 6. An unfinished work order is left alone.
 write_wo wo-open done assigned
