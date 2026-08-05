@@ -33,9 +33,11 @@ set -u
 
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 METRICS_DIR="${METRICS_DIR:-$CLAUDE_DIR/metrics}"
+TOOLS_DIR="${TOOLS_DIR:-$CLAUDE_DIR/tools}"
 INPUT="$(cat 2>/dev/null || true)"
 
 HOOK_JSON="$INPUT" \
+TOOLS_DIR="$TOOLS_DIR" \
 METRICS_DIR="$METRICS_DIR" \
 PIPELINE_RELAY_REARM_MINUTES="${PIPELINE_RELAY_REARM_MINUTES:-60}" \
 python3 <<'PY' || true
@@ -43,6 +45,12 @@ import json
 import os
 import sys
 import time
+
+sys.path.insert(0, os.environ.get("TOOLS_DIR", ""))
+try:
+    import obs_emit
+except Exception:
+    obs_emit = None
 
 
 def bail():
@@ -74,6 +82,12 @@ if not isinstance(tool_input, dict):
 skill = str(tool_input.get("skill") or "").strip().lower()
 leaf = skill.rsplit(":", 1)[-1]
 session_id = data.get("session_id") or "unknown"
+
+if obs_emit is not None:
+    try:
+        obs_emit.emit("skill.invoked", session_id=session_id, skill_name=leaf)
+    except Exception:
+        pass
 
 RELAYS = {
     "brainstorming": (
