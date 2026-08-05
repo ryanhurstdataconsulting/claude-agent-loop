@@ -25,7 +25,7 @@ import json,sys
 print(json.dumps({'session_id': sys.argv[1], 'tool_name': sys.argv[2],
                   'tool_input': {'skill': sys.argv[3]},
                   'hook_event_name': 'PostToolUse'}))" "$sid" "$tool" "$skill")"
-  printf '%s' "$payload" | env METRICS_DIR="$TMP/metrics" "$@" bash "$HOOK"
+  printf '%s' "$payload" | env METRICS_DIR="$TMP/metrics" CLAUDE_DIR="$TMP/claude" "$@" bash "$HOOK"
 }
 
 # contains <stdout> <needle>

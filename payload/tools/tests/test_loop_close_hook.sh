@@ -41,7 +41,7 @@ PY
 run_hook() {
   printf '{"session_id":"%s","hook_event_name":"SessionEnd"}' "$1" \
     | env TOOLS_DIR="$TOOLS" METRICS_DIR="$METRICS" PROJECTS_DIR="$PROJECTS" \
-          STATE_DIR="$STATE" "${@:2}" bash "$HOOK"
+          STATE_DIR="$STATE" CLAUDE_DIR="$TMP/claude" "${@:2}" bash "$HOOK"
 }
 
 count_records() {
@@ -107,18 +107,18 @@ then pass "8 kill switch: nothing closed"; else die "8 kill switch closed anyway
 
 # 9. Malformed hook JSON -> fails open, exit 0.
 out="$(printf '{not json' | env TOOLS_DIR="$TOOLS" METRICS_DIR="$METRICS" \
-  PROJECTS_DIR="$PROJECTS" STATE_DIR="$STATE" bash "$HOOK")"; rc=$?
+  PROJECTS_DIR="$PROJECTS" STATE_DIR="$STATE" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "9 malformed JSON: exit 0" || die "9 exit $rc"
 
 # 10. Missing state directory -> fails open, exit 0.
 out="$(printf '{"session_id":"s10"}' | env TOOLS_DIR="$TOOLS" METRICS_DIR="$METRICS" \
-  PROJECTS_DIR="$PROJECTS" STATE_DIR="$TMP/gone" bash "$HOOK")"; rc=$?
+  PROJECTS_DIR="$PROJECTS" STATE_DIR="$TMP/gone" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && pass "10 missing state dir: fails open" \
   || die "10 (rc=$rc out=$out)"
 
 # 11. Unimportable tools -> fails open, exit 0.
 out="$(printf '{"session_id":"s11"}' | env TOOLS_DIR="$TMP/nope" METRICS_DIR="$METRICS" \
-  PROJECTS_DIR="$PROJECTS" STATE_DIR="$STATE" bash "$HOOK")"; rc=$?
+  PROJECTS_DIR="$PROJECTS" STATE_DIR="$STATE" CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && [ -z "$out" ] && pass "11 missing tools: fails open" \
   || die "11 (rc=$rc out=$out)"
 

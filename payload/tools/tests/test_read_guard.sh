@@ -36,7 +36,7 @@ $3" >/dev/null 2>&1
 
 # 1. Hard-blocked file (package-lock.json) -> deny naming the class.
 P1='{"tool_name":"Read","tool_input":{"file_path":"/repo/package-lock.json"}}'
-out1="$(printf '%s' "$P1" | bash "$HOOK")"; rc=$?
+out1="$(printf '%s' "$P1" | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "1 hard-block file: exit 0" || die "1 exit $rc"
 assert_json "1" "$out1" "
 assert h['permissionDecision']=='deny', 'expected deny'
@@ -47,7 +47,7 @@ assert 'lockfile' in r.lower(), 'reason must name the class'
 
 # 2. Hard-blocked directory segment (node_modules/) -> deny.
 P2='{"tool_name":"Read","tool_input":{"file_path":"/repo/node_modules/left-pad/index.js"}}'
-out2="$(printf '%s' "$P2" | bash "$HOOK")"; rc=$?
+out2="$(printf '%s' "$P2" | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "2 hard-block dir: exit 0" || die "2 exit $rc"
 assert_json "2" "$out2" "
 assert h['permissionDecision']=='deny', 'expected deny'
@@ -56,7 +56,7 @@ assert 'node_modules' in h.get('permissionDecisionReason',''), 'reason names dir
 
 # 3. Normal small file, no offset/limit -> allow, no additionalContext.
 P3="{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$SMALL\"}}"
-out3="$(printf '%s' "$P3" | bash "$HOOK")"; rc=$?
+out3="$(printf '%s' "$P3" | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "3 small file: exit 0" || die "3 exit $rc"
 assert_json "3" "$out3" "
 assert h['permissionDecision']=='allow', 'expected allow'
@@ -65,7 +65,7 @@ assert 'additionalContext' not in h, 'small file must not nudge'
 
 # 4. Large file, no offset/limit -> allow + additionalContext nudge.
 P4="{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$BIG\"}}"
-out4="$(printf '%s' "$P4" | bash "$HOOK")"; rc=$?
+out4="$(printf '%s' "$P4" | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "4 large file: exit 0" || die "4 exit $rc"
 assert_json "4" "$out4" "
 assert h['permissionDecision']=='allow', 'expected allow'
@@ -76,7 +76,7 @@ assert 'offset' in c.lower(), 'nudge should mention offset/limit'
 
 # 5. Large file WITH offset/limit -> allow, no nudge.
 P5="{\"tool_name\":\"Read\",\"tool_input\":{\"file_path\":\"$BIG\",\"offset\":100,\"limit\":50}}"
-out5="$(printf '%s' "$P5" | bash "$HOOK")"; rc=$?
+out5="$(printf '%s' "$P5" | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "5 large+offset: exit 0" || die "5 exit $rc"
 assert_json "5" "$out5" "
 assert h['permissionDecision']=='allow', 'expected allow'
@@ -84,7 +84,7 @@ assert 'additionalContext' not in h, 'offset/limit read must not nudge'
 " && pass "5 large+offset: allow, no nudge" || die "5 bad JSON: $out5"
 
 # 6. Malformed stdin JSON -> exit 0, allow, no crash.
-out6="$(printf '%s' 'not json {{{' | bash "$HOOK")"; rc=$?
+out6="$(printf '%s' 'not json {{{' | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "6 malformed stdin: exit 0" || die "6 exit $rc"
 assert_json "6" "$out6" "
 assert h['permissionDecision']=='allow', 'malformed -> allow'
@@ -92,12 +92,12 @@ assert h['permissionDecision']=='allow', 'malformed -> allow'
 
 # 7. Missing file_path AND nonexistent path -> allow, exit 0.
 P7A='{"tool_name":"Read","tool_input":{}}'
-out7a="$(printf '%s' "$P7A" | bash "$HOOK")"; rc=$?
+out7a="$(printf '%s' "$P7A" | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "7a missing file_path: exit 0" || die "7a exit $rc"
 assert_json "7a" "$out7a" "assert h['permissionDecision']=='allow', 'missing path -> allow'" \
   && pass "7a missing file_path: allow" || die "7a bad JSON: $out7a"
 P7B='{"tool_name":"Read","tool_input":{"file_path":"/no/such/file/here.txt"}}'
-out7b="$(printf '%s' "$P7B" | bash "$HOOK")"; rc=$?
+out7b="$(printf '%s' "$P7B" | env CLAUDE_DIR="$TMP/claude" bash "$HOOK")"; rc=$?
 [ $rc -eq 0 ] && pass "7b unreadable path: exit 0" || die "7b exit $rc"
 assert_json "7b" "$out7b" "
 assert h['permissionDecision']=='allow', 'unreadable path -> allow'

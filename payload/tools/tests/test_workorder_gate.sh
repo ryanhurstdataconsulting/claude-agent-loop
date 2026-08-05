@@ -25,7 +25,7 @@ run() {
   # run <session-id> <prompt-json-safe-text> [extra env assignments...]
   sid="$1"; prompt="$2"; shift 2
   payload="$(python3 -c "import json,sys; print(json.dumps({'session_id': sys.argv[1], 'prompt': sys.argv[2], 'hook_event_name': 'UserPromptSubmit'}))" "$sid" "$prompt")"
-  printf '%s' "$payload" | env TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/metrics" "$@" bash "$HOOK"
+  printf '%s' "$payload" | env TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/metrics" CLAUDE_DIR="$TMP/claude" "$@" bash "$HOOK"
 }
 
 has_directive() {
