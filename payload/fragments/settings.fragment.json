@@ -46,6 +46,16 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/obs-events.sh"
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
@@ -70,6 +80,14 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/usage-budget.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/obs-events.sh"
           }
         ]
       },
@@ -108,6 +126,14 @@
           {
             "type": "command",
             "command": "$HOME/.claude/hooks/read-guard.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/obs-events.sh"
           }
         ]
       }

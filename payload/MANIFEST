@@ -211,6 +211,7 @@ link-file hooks/read-guard.sh
 link-file hooks/workorder-gate.sh
 link-file hooks/pipeline-relay.sh
 link-file hooks/loop-close.sh
+link-file hooks/obs-events.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
 link-file tools/assess_task.py
