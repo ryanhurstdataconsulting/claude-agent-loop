@@ -1,7 +1,7 @@
 #!/bin/bash
 # test_hook_error_trap.sh — the hook.error trap block fires on an unexpected
 # non-zero exit inside the bash wrapper. Verified against one representative
-# hook (harvest-metrics.sh) plus a static grep confirming all 10 files carry
+# hook (harvest-metrics.sh) plus a static grep confirming all 11 files carry
 # the block. macOS bash-3.2 portable.
 set -u
 
@@ -12,7 +12,7 @@ fail=0
 pass() { echo "PASS - $1"; }
 die() { echo "FAIL - $1"; fail=1; }
 
-EXPECTED_HOOKS="inject-resource-loop.sh harvest-metrics.sh precompact-event.sh auto-update.sh context-budget.sh usage-budget.sh read-guard.sh workorder-gate.sh pipeline-relay.sh loop-close.sh"
+EXPECTED_HOOKS="inject-resource-loop.sh harvest-metrics.sh precompact-event.sh auto-update.sh context-budget.sh usage-budget.sh read-guard.sh workorder-gate.sh pipeline-relay.sh loop-close.sh obs-events.sh"
 
 for h in $EXPECTED_HOOKS; do
   if grep -q '_obs_hook_error' "$HOOKS_DIR/$h" && grep -q "trap _obs_hook_error ERR" "$HOOKS_DIR/$h"; then
