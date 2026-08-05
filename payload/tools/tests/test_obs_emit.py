@@ -106,6 +106,20 @@ class TestDeterministicIds(ObsEmitFixture):
         self.assertEqual(first["trace_id"], second["trace_id"],
                          "session_id must win over agent_id/plan_id")
 
+    def test_no_explicit_component_key_still_gets_distinct_span_ids(self):
+        # Regression test: _component_key()'s fallback used to be
+        # "<event>|<agent_id>|<part_id>" with no discriminator, so every
+        # gate.decision/turn.stop/skill.invoked/hook.error call in a session
+        # collapsed onto the SAME span_id. The fallback now folds in the
+        # record's own timestamp, so two calls with no explicit
+        # component_key get different span_ids even with identical
+        # event/session_id.
+        obs_emit.emit("gate.decision", session_id="sess-1")
+        obs_emit.emit("gate.decision", session_id="sess-1")
+        first, second = self._lines()
+        self.assertEqual(first["trace_id"], second["trace_id"])
+        self.assertNotEqual(first["span_id"], second["span_id"])
+
 
 class TestAppendSafety(ObsEmitFixture):
     def test_survives_malformed_last_line(self):

@@ -40,11 +40,11 @@ def _root_task_id(session_id, agent_id, plan_id):
     return session_id or agent_id or plan_id or "unknown"
 
 
-def _component_key(event, agent_id, part_id, attrs):
+def _component_key(event, agent_id, part_id, attrs, ts):
     explicit = attrs.pop("component_key", None)
     if explicit:
         return str(explicit)
-    return "%s|%s|%s" % (event, agent_id or "", part_id or "")
+    return "%s|%s|%s|%s" % (event, agent_id or "", part_id or "", ts)
 
 
 def trace_id_for(root_task_id):
@@ -81,8 +81,8 @@ def emit(event, session_id=None, agent_id=None, plan_id=None, part_id=None,
         attrs = dict(attrs)
         parent_span_id = attrs.pop("parent_span_id", None)
         root_task_id = _root_task_id(session_id, agent_id, plan_id)
-        component_key = _component_key(event, agent_id, part_id, attrs)
         ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        component_key = _component_key(event, agent_id, part_id, attrs, ts)
         record = {
             "schema": "obs.v1",
             "ts": ts,
