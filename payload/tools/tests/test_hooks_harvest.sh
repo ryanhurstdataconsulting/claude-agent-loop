@@ -34,13 +34,19 @@ bash -n "$PRECOMPACT" && pass "precompact-event.sh parses (bash -n)" || fail "pr
 SANDBOX="$(mktemp -d 2>/dev/null || mktemp -d -t calhooks)"
 trap 'rm -rf "$SANDBOX"' EXIT INT TERM
 
-# Each case gets a clean HOME with the tool copied to $HOME/.claude/tools.
+# Each case gets a clean HOME with the tools copied to $HOME/.claude/tools.
+# Copy every sibling tool module, not a hand-picked subset: harvest_metrics.py
+# now imports obs_emit and assess_task (which itself imports plan_task, which
+# imports route_role, which imports lint_roles) — a hardcoded two-file list
+# silently bit-rots every time such a same-directory import is added. This
+# mirrors the real installed layout, where every payload/tools/*.py lands in
+# ~/.claude/tools/ together (see the "copy-if-absent seeds" test elsewhere in
+# this suite).
 fresh_home() {
   h="$SANDBOX/$1"
   rm -rf "$h"
   mkdir -p "$h/.claude/tools" "$h/.claude/metrics"
-  cp "$TOOLS/harvest_metrics.py" "$h/.claude/tools/"
-  cp "$TOOLS/distill_transcripts.py" "$h/.claude/tools/"
+  cp "$TOOLS"/*.py "$h/.claude/tools/"
   printf '%s' "$h"
 }
 

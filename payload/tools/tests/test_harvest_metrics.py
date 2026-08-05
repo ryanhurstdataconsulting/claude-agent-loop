@@ -363,9 +363,14 @@ class TestSessionRollup(HarvestFixture):
                              str(self.metrics))
         # Two catch-up tasks + one session record + one session-backfill
         # re-emit for the un-announced agent-bbb (agent-aaa announced its own
-        # resources, so it is NOT backfilled) => four records.
-        kinds = sorted(r["kind"] for r in emitted)
-        self.assertEqual(kinds, ["session", "task", "task", "task"])
+        # resources, so it is NOT backfilled), plus one kind:"run" sibling of
+        # the session record (Phase 2 Task 2) => five records. Asserted
+        # kind-by-kind rather than as a flat list so a future record kind
+        # doesn't silently reshape this test's meaning again.
+        self.assertEqual(
+            len([r for r in emitted if r["kind"] == "session"]), 1)
+        self.assertEqual(len([r for r in emitted if r["kind"] == "task"]), 3)
+        self.assertEqual(len([r for r in emitted if r["kind"] == "run"]), 1)
         session = [r for r in emitted if r["kind"] == "session"][0]
         self.assertEqual(session["task_id"], "session-%s" % SID)
         self.assertEqual(session["trigger"], "SessionEnd")
@@ -525,6 +530,30 @@ class TestSessionRollup(HarvestFixture):
         backfills = [r for r in all_records(self.metrics)
                      if r.get("resources_source") == "session-backfill"]
         self.assertEqual(backfills, [])
+
+
+class TestRunRecordsSession(HarvestFixture):
+    """kind:"run" (session) emission — Phase 2 Task 2."""
+
+    def test_session_harvest_also_emits_kind_run(self):
+        emitted = hm.harvest(str(self.session_file), "SessionEnd",
+                             str(self.metrics))
+        runs = [r for r in emitted if r["kind"] == "run"]
+        self.assertEqual(len(runs), 1)   # exactly one kind:"run", alongside session
+        run = runs[0]
+        self.assertEqual(run["schema"], "run.v1")
+        self.assertEqual(run["run_kind"], "session")
+        self.assertEqual(run["task_id"], "session-%s" % SID)
+        self.assertIsNone(run["parent_task_id"])
+        self.assertEqual(run["stop_reason"], "completed")
+        # Fixture has no interrupted turns and error_rate=0, so success.
+        self.assertEqual(run["outcome"], "success")
+
+        import obs_emit
+        self.assertEqual(run["trace_id"], obs_emit.trace_id_for(SID))
+
+        sessions = [r for r in emitted if r["kind"] == "session"]
+        self.assertEqual(len(sessions), 1)
 
 
 class TestCliAndErrors(HarvestFixture):

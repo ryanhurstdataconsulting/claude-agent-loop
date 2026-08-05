@@ -55,6 +55,10 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import distill_transcripts as dt  # noqa: E402
+import obs_emit  # noqa: E402 - stdlib-only itself, so this doesn't violate
+                  # this file's "stdlib only" docstring claim
+from assess_task import ERROR_RATE_MAX  # noqa: E402 - source of truth for the
+                  # error-rate ceiling; see assess_task.py's own comment
 
 SCHEMA = 1
 
@@ -417,6 +421,40 @@ def build_record(path, event, kind, session_id=None, extra=None):
     return record
 
 
+def build_run_record(agg, sid):
+    """kind:"run" (session), derived from the same aggregate build_record() uses.
+
+    outcome: "interrupted" wins over everything if any turn was interrupted
+    (agg["interrupted"] > 0) — this is real, already-computed signal
+    build_record() itself uses, unlike loop_close.py's subagent runs, which
+    have no such signal at the part level. Otherwise "success" unless
+    error_rate exceeds ERROR_RATE_MAX (imported from assess_task, the source
+    of truth for this ceiling).
+    """
+    interrupted = (agg.get("interrupted") or 0) > 0
+    error_rate = agg.get("error_rate")
+    if interrupted:
+        outcome = "interrupted"
+    elif error_rate is not None and error_rate > ERROR_RATE_MAX:
+        outcome = "partial"
+    else:
+        outcome = "success"
+    return {
+        "schema": "run.v1",
+        "kind": "run",
+        "task_id": "session-%s" % sid,
+        "run_kind": "session",
+        "parent_task_id": None,
+        "outcome": outcome,
+        "stop_reason": "user-interrupt" if interrupted else "completed",
+        "trace_id": obs_emit.trace_id_for(sid or "unknown"),
+        "plan_id": None,
+        "part_id": None,
+        "ts_start": agg.get("ts_start"),
+        "ts_end": agg.get("ts_end"),
+    }
+
+
 # --- storage + cursor -------------------------------------------------------
 
 def _cursor_path(metrics_dir):
@@ -538,6 +576,13 @@ def harvest(transcript, event, metrics_dir, session_id=None):
             session_id=session_id, extra={"tasks_harvested": tasks_harvested})
         if session_rec:
             emitted.append(session_rec)
+            # kind:"run" (session) — a sibling of the kind:"session" record
+            # just emitted above, gated on the SAME cursor/skip decision (it
+            # only fires when _maybe_harvest_file actually re-harvested the
+            # session file this run, never independently of it).
+            run_rec = build_run_record(session_rec, session_rec["session_id"])
+            _append_record(metrics_dir, run_rec)
+            emitted.append(run_rec)
 
         # C1 — session-backfill of task resources. Subagents rarely announce,
         # so their task records usually carry resources_deployed=[] while the
