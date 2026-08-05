@@ -82,6 +82,11 @@ MAX_TURNS="${AUDIT_MAX_TURNS:-40}"
 TIMEOUT_SECONDS="${AUDIT_TIMEOUT:-3600}"
 GIT_TIMEOUT_SECONDS="${AUDIT_GIT_TIMEOUT:-120}"
 
+# The shared observability metrics tree — separate from $STORE (the
+# per-package audit-store JSON this script has always written). See
+# _emit_run_record below.
+METRICS_DIR="${METRICS_DIR:-$HOME/.claude/metrics}"
+
 usage() {
   cat >&2 <<'EOF'
 usage: audit_run.sh <package-path> <store-root> [--key KEY] [--dry-run]
@@ -418,6 +423,69 @@ _write_run_log_checked() {
   return 0
 }
 
+# _emit_run_record <verdict:ok|failed> <package-key> <metrics-dir> [cli-rc]
+# Appends one kind:"run" (audit) record into the monthly metrics shard —
+# separate from _write_run_log's own per-package audit-store JSON, which is
+# a different concept in a different tree (see Phase 2 plan design decision).
+# Fail-open: never lets a metrics-write problem fail the audit itself.
+_emit_run_record() {
+  RUN_VERDICT="$1" RUN_PKG_KEY="$2" RUN_METRICS_DIR="${3:-$HOME/.claude/metrics}" \
+  RUN_CLI_RC="${4:-}" TOOLS_DIR="${TOOLS_DIR:-$HOME/.claude/tools}" \
+    python3 -c '
+import datetime
+import json
+import os
+import sys
+
+sys.path.insert(0, os.environ.get("TOOLS_DIR", ""))
+try:
+    import obs_emit
+except Exception:
+    sys.exit(0)
+
+verdict = os.environ.get("RUN_VERDICT", "failed")
+pkg_key = os.environ.get("RUN_PKG_KEY", "unknown")
+metrics_dir = os.environ.get("RUN_METRICS_DIR", "")
+cli_rc_raw = os.environ.get("RUN_CLI_RC", "")
+
+outcome = "success" if verdict == "ok" else "failure"
+if verdict == "ok":
+    stop_reason = "completed"
+else:
+    try:
+        stop_reason = "timeout" if int(cli_rc_raw) == 124 else "error"
+    except (TypeError, ValueError):
+        stop_reason = "error"
+
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+record = {
+    "schema": "run.v1",
+    "kind": "run",
+    "task_id": "audit-%s-%s" % (pkg_key, now),
+    "run_kind": "audit",
+    "parent_task_id": None,
+    "outcome": outcome,
+    "stop_reason": stop_reason,
+    "trace_id": obs_emit.trace_id_for("audit:" + pkg_key),
+    "plan_id": None,
+    "part_id": None,
+    "ts_start": now,
+    "ts_end": now,
+    }
+try:
+    shard = os.path.join(metrics_dir, "%s.jsonl" % now[:7])
+    os.makedirs(metrics_dir, exist_ok=True)
+    line = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    fd = os.open(shard, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+except Exception:
+    pass
+' >/dev/null 2>&1 || true
+}
+
 # --- worktree, and the trap that guarantees its removal -----------------------
 # The trap is registered BEFORE `worktree add`. An interrupt landing between
 # the two would otherwise leave a worktree registered against the developer's
@@ -570,6 +638,7 @@ trap '_cleanup_signal 143' TERM
 _fail_run() {
   echo "audit_run: $1" >&2
   _write_run_log_checked "failed" "" "" "$1"
+  _emit_run_record "failed" "$PKG_KEY" "$METRICS_DIR" "${CLI_RC:-}"
   _notify "audit failed: $PKG_KEY — $1"
   exit 1
 }
@@ -873,6 +942,7 @@ else
   _run_log_lost
   exit 1
 fi
+_emit_run_record "ok" "$PKG_KEY" "$METRICS_DIR" "$CLI_RC"
 CRITICAL="${COUNTS%% *}"
 HIGH="${COUNTS##* }"
 
