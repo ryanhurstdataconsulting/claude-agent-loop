@@ -232,6 +232,7 @@ link-file tools/lint_registry.py
 link-file tools/lint_roles.py
 link-file tools/lint_scales.py
 link-file tools/loop_close.py
+link-file tools/obs_emit.py
 link-file tools/make_brief.py
 link-file tools/plan_task.py
 link-file tools/loop_autocommit.sh
