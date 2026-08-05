@@ -34,12 +34,20 @@ assert_one_record() {
   [ "$count" -eq 1 ] && pass "$3 (exactly one record)" || die "$3 wrong record count: $count (got: $1)"
 }
 
+# assert_score_present <recs> <session_id> <label> — the record for this
+# session must carry a non-null numeric score, not the bare bail() default.
+assert_score_present() {
+  line="$(echo "$1" | grep "\"session_id\":\"$2\"")"
+  echo "$line" | grep -qE '"score":[0-9]' && pass "$3" || die "$3 missing/null score (got: $line)"
+}
+
 # --- workorder-gate.sh: silent path -> gate.decision action:silent ----------
 payload="$(python3 -c "import json; print(json.dumps({'session_id':'g1','prompt':'what does this error mean'}))")"
 printf '%s' "$payload" | env CLAUDE_DIR="$TMP/claude" TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/claude/metrics" bash "$HOOKS_DIR/workorder-gate.sh" >/dev/null
 recs="$(last_records)"
 assert_gate_action "$recs" "workorder" "silent" "workorder silent path recorded"
 assert_one_record "$recs" "g1" "workorder silent path"
+assert_score_present "$recs" "g1" "workorder silent path: score not discarded"
 
 # --- workorder-gate.sh: inject path -> gate.decision action:inject with score
 payload="$(python3 -c "import json; print(json.dumps({'session_id':'g2','prompt':'build a brand new coach dashboard with rankings and drilldowns'}))")"

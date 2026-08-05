@@ -109,7 +109,7 @@ except Exception:
     bail()
 
 if score < threshold:
-    bail()
+    bail(score=score)
 
 # --- re-arm window ------------------------------------------------------------
 try:
@@ -127,7 +127,7 @@ try:
         with open(state_path) as fh:
             last = float(json.load(fh).get("last_nudge") or 0)
         if rearm_min > 0 and (time.time() - last) < rearm_min * 60:
-            bail()
+            bail(score=score)
 except Exception:
     state_path = None  # cannot track -> nudge anyway, never suppress silently
 
