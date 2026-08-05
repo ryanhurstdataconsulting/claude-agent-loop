@@ -20,6 +20,20 @@
 # sizing run in Python, which is bash-version-independent.
 set -u
 
+_obs_hook_error() {
+  TOOLS_DIR="${TOOLS_DIR:-$HOME/.claude/tools}" HOOK_NAME="read-guard.sh" \
+    python3 -c '
+import os, sys
+sys.path.insert(0, os.environ.get("TOOLS_DIR", ""))
+try:
+    import obs_emit
+    obs_emit.emit("hook.error", hook=os.environ.get("HOOK_NAME"), stage="trap")
+except Exception:
+    pass
+' >/dev/null 2>&1 || true
+}
+trap _obs_hook_error ERR
+
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 TOOLS_DIR="${TOOLS_DIR:-$CLAUDE_DIR/tools}"
 INPUT="$(cat 2>/dev/null || true)"

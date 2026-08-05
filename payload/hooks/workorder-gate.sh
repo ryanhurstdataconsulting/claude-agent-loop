@@ -29,6 +29,20 @@
 # Kill switch: WORKORDER_GATE_DISABLE=1. All thresholds env-overridable.
 set -u
 
+_obs_hook_error() {
+  TOOLS_DIR="${TOOLS_DIR:-$HOME/.claude/tools}" HOOK_NAME="workorder-gate.sh" \
+    python3 -c '
+import os, sys
+sys.path.insert(0, os.environ.get("TOOLS_DIR", ""))
+try:
+    import obs_emit
+    obs_emit.emit("hook.error", hook=os.environ.get("HOOK_NAME"), stage="trap")
+except Exception:
+    pass
+' >/dev/null 2>&1 || true
+}
+trap _obs_hook_error ERR
+
 [ "${WORKORDER_GATE_DISABLE:-0}" = "1" ] && exit 0
 
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"

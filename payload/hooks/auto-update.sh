@@ -23,6 +23,20 @@
 # Opt out with AGENT_LOOP_AUTO_UPDATE=0. All thresholds are env-overridable.
 set -u
 
+_obs_hook_error() {
+  TOOLS_DIR="${TOOLS_DIR:-$HOME/.claude/tools}" HOOK_NAME="auto-update.sh" \
+    python3 -c '
+import os, sys
+sys.path.insert(0, os.environ.get("TOOLS_DIR", ""))
+try:
+    import obs_emit
+    obs_emit.emit("hook.error", hook=os.environ.get("HOOK_NAME"), stage="trap")
+except Exception:
+    pass
+' >/dev/null 2>&1 || true
+}
+trap _obs_hook_error ERR
+
 [ "${AGENT_LOOP_AUTO_UPDATE:-1}" = "0" ] && exit 0
 
 INPUT="$(cat 2>/dev/null || true)"
