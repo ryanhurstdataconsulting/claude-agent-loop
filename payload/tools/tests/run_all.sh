@@ -62,6 +62,32 @@ for f in test_*.sh; do
   echo ""
 done
 
+# payload/observability/tests/ lives in a different directory and under a
+# different filename (run.sh, not test_*.sh), so the glob loops above never
+# pick it up — it has its own venv-aware runner (SKIP when opentelemetry-sdk
+# isn't installed, PASS/FAIL when it is) because it is the only suite in this
+# repo with a real pip dependency. Report its status explicitly rather than
+# silently omitting it, so "N suites, 0 failed" reflects the real coverage.
+OBS_RUN_SH="$(cd "$HERE/../../observability/tests" 2>/dev/null && pwd)/run.sh"
+echo "=== observability/tests/run.sh ==="
+if [ -f "$OBS_RUN_SH" ]; then
+  out="$(bash "$OBS_RUN_SH" 2>&1)"
+  rc=$?
+  printf '%s\n' "$out"
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL - observability/tests/run.sh"
+    fail_count=$((fail_count + 1))
+  elif printf '%s\n' "$out" | grep -q '^SKIP'; then
+    echo "SKIP - observability/tests/run.sh"
+  else
+    echo "PASS - observability/tests/run.sh"
+  fi
+  suite_count=$((suite_count + 1))
+else
+  echo "SKIP - observability/tests/run.sh (not found at $OBS_RUN_SH)"
+fi
+echo ""
+
 echo "---"
 echo "run_all: $suite_count suites, $fail_count failed"
 if [ "$fail_count" -eq 0 ]; then
