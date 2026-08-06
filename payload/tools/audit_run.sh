@@ -507,7 +507,7 @@ except Exception:
 # _classify_attempt <cli_rc> <findings_file_exists: 0|1>
 # Prints exactly one of: infrastructural | model-produced | ok
 #
-# The two failure classes need telling apart because they call for opposite
+# The failure classes need to be told apart because they call for opposite
 # responses. Infrastructural (the CLI itself broke, nothing was produced) is
 # worth one retry in a fresh worktree — nothing was lost by starting over.
 # Model-produced (the agent ran, but the findings are missing/empty, OR the
@@ -515,6 +515,18 @@ except Exception:
 # retrying over real findings would discard them, and retrying a model that
 # already ran to completion and produced nothing usable would not fix
 # anything a second time either. See Phase 4 plan design decision 3.
+#
+# A CLI exit of 124 (the `timeout`/`gtimeout` wrapper's own signal for "the
+# wall-clock budget expired") is deliberately excluded from the
+# infrastructural, retried path, even though it is a nonzero exit with no
+# findings and would otherwise match that branch. Retrying a CLI that already
+# used its full $AUDIT_TIMEOUT once is unlikely to produce a different
+# result and would double the worst-case wall-clock cost of every hung
+# package in the nightly sweep. It is classified model-produced instead —
+# fail once, alert, never retried — which is the same "don't retry, just
+# alert" response model-produced already gets. The findings-exist check
+# above still runs first, so the same "never discard real findings" rule
+# applies if a timeout ever leaves findings behind too.
 _classify_attempt() {
   local rc="$1" findings_exist="$2"
   if [ "$findings_exist" = "1" ]; then
@@ -523,6 +535,10 @@ _classify_attempt() {
     else
       echo "model-produced"   # findings landed despite a nonzero exit — never discard them
     fi
+    return 0
+  fi
+  if [ "$rc" = "124" ]; then
+    echo "model-produced"     # timed out at the configured budget — retrying won't help
     return 0
   fi
   if [ "$rc" != "0" ]; then
@@ -828,10 +844,14 @@ critical, high, medium, and low, each an integer count."
     model-produced)
       if [ "$FINDINGS_EXIST" -eq 1 ]; then
         _fail_run "claude exited $CLI_RC but left findings at $AUDIT_FILE — real findings are never discarded by retrying over them, so this is treated as model-produced, not infrastructural: $(tail -1 "$CLI_ERR" 2>/dev/null)"
+      elif [ "$CLI_RC" = "124" ]; then
+        _fail_run "claude timed out after ${TIMEOUT_SECONDS}s with no findings written; a timeout is not retried, since the CLI already used its full time budget once"
       else
         _fail_run "model produced no usable findings: $AUDIT_FILE missing or empty (claude exited $CLI_RC)"
       fi
       ;;
+    ok) ;;  # fall through to the existing gate/branch/commit body, unchanged
+    *) _fail_run "unexpected classification: $CLASSIFICATION" ;;
   esac
 
   # Classification is "ok" from here on: the existing gate/branch/commit

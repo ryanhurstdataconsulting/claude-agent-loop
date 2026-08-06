@@ -43,6 +43,17 @@ out="$(_classify_attempt 0 1)"
 [ "$out" = "ok" ] && pass "zero exit + findings present -> ok" \
   || die "expected ok, got: $out"
 
+# rc=124 is the `timeout`/`gtimeout` wrapper's own signal for "the wall-clock
+# budget expired". It is a nonzero exit with no findings — the same shape as
+# the first case above — but a hung CLI that already used its full timeout
+# once is unlikely to succeed on a retry, so it is deliberately routed to
+# model-produced (fail once, alert, never retried) rather than
+# infrastructural (retry once). See Phase 4 plan design decision 3 and the
+# review finding that added this case.
+out="$(_classify_attempt 124 0)"
+[ "$out" = "model-produced" ] && pass "rc=124 (timeout) + no findings -> model-produced, not retried" \
+  || die "expected model-produced, got: $out"
+
 if [ "$fail" -eq 0 ]; then
   echo "ALL PASS - test_audit_run_retry.sh"; exit 0
 else
