@@ -466,7 +466,7 @@ record = {
     "parent_task_id": None,
     "outcome": outcome,
     "stop_reason": stop_reason,
-    "trace_id": obs_emit.trace_id_for("audit:" + pkg_key),
+    "trace_id": obs_emit.trace_id_for("audit:%s:%s" % (pkg_key, now)),
     "plan_id": None,
     "part_id": None,
     "ts_start": now,
