@@ -235,6 +235,7 @@ link-file tools/lint_scales.py
 link-file tools/loop_close.py
 link-file tools/obs_emit.py
 link-file tools/make_brief.py
+link-file tools/metrics_to_otlp.py
 link-file tools/plan_task.py
 link-file tools/loop_autocommit.sh
 link-file tools/loop_contribute.py
