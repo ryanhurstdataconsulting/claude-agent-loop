@@ -430,7 +430,7 @@ _write_run_log_checked() {
 # Fail-open: never lets a metrics-write problem fail the audit itself.
 _emit_run_record() {
   RUN_VERDICT="$1" RUN_PKG_KEY="$2" RUN_METRICS_DIR="${3:-$HOME/.claude/metrics}" \
-  RUN_CLI_RC="${4:-}" TOOLS_DIR="${TOOLS_DIR:-$HOME/.claude/tools}" \
+  RUN_CLI_RC="${4:-}" TOOLS_DIR="$TOOL_DIR" \
     python3 -c '
 import datetime
 import json

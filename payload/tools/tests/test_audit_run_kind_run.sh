@@ -6,7 +6,8 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-AUDIT_RUN="$(cd "$HERE/.." && pwd)/audit_run.sh"
+TOOLS_ROOT="$(cd "$HERE/.." && pwd)"
+AUDIT_RUN="$TOOLS_ROOT/audit_run.sh"
 fail=0
 pass() { echo "PASS - $1"; }
 die() { echo "FAIL - $1"; fail=1; }
@@ -29,7 +30,12 @@ fi
 source "$TMP/helper.sh"
 
 # _emit_run_record <verdict> <package-key> <metrics-dir> [cli-rc]
-CLAUDE_DIR="$TMP/claude" METRICS_DIR="$TMP/claude/metrics" \
+# TOOL_DIR is the variable _emit_run_record actually reads to locate
+# obs_emit.py (see audit_run.sh); point it at this repo's own payload/tools/
+# so the test exercises the real lookup instead of relying on this dev
+# machine's ~/.claude/tools symlink happening to resolve back into this
+# checkout.
+TOOL_DIR="$TOOLS_ROOT" \
   _emit_run_record "ok" "test-package" "$TMP/claude/metrics" "0"
 shard="$(find "$TMP/claude/metrics" -maxdepth 1 -name '*.jsonl' | head -1)"
 if [ -n "$shard" ] && grep -q '"kind":"run"' "$shard" && grep -q '"run_kind":"audit"' "$shard" && grep -q '"outcome":"success"' "$shard"; then
@@ -38,7 +44,7 @@ else
   die "ok verdict did not produce expected kind:run record (shard: $shard)"
 fi
 
-CLAUDE_DIR="$TMP/claude" METRICS_DIR="$TMP/claude/metrics" \
+TOOL_DIR="$TOOLS_ROOT" \
   _emit_run_record "failed" "test-package-2" "$TMP/claude/metrics" "124"
 if grep -q '"outcome":"failure"' "$shard" && grep -q '"stop_reason":"timeout"' "$shard"; then
   pass "failed verdict + rc=124 -> outcome:failure, stop_reason:timeout"
@@ -46,7 +52,7 @@ else
   die "timeout case not recorded correctly"
 fi
 
-CLAUDE_DIR="$TMP/claude" METRICS_DIR="$TMP/claude/metrics" \
+TOOL_DIR="$TOOLS_ROOT" \
   _emit_run_record "failed" "test-package-3" "$TMP/claude/metrics" "1"
 if grep -q '"stop_reason":"error"' "$shard"; then
   pass "failed verdict + rc=1 -> stop_reason:error"
