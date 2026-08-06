@@ -752,14 +752,57 @@ _run_cli() {
     # SIGTERM (rc 143), which we normalize to 124 so _classify_attempt's
     # existing rc=124-means-timeout branch fires exactly as it would with
     # a real timeout binary.
+    #
+    # `sleep` is backgrounded DIRECTLY here, not nested inside the watcher
+    # subshell, so this function holds its own PID and can kill the real
+    # sleep(1) process the moment the CLI exits on its own. A `( sleep N;
+    # kill ... ) &` subshell has no PID of its own for that child: killing
+    # the subshell after `sleep` has already returned does nothing, and
+    # killing it WHILE sleep is still running only kills the subshell
+    # process, not sleep — sleep keeps running as an orphan holding
+    # $CLI_OUT/$CLI_ERR open for the rest of the timeout window (verified
+    # via `ps` during Phase 4's final review: a `sleep 3600` orphan after
+    # every single attempt at the production default).
+    #
+    # The watcher polls `kill -0 "$sleep_pid"` rather than `wait
+    # "$sleep_pid"`: `wait` only ever succeeds on a PID that is a DIRECT
+    # child of the shell process calling it, and sleep_pid is a child of
+    # THIS function's shell, not of the watcher subshell forked below it —
+    # `wait` on it there fails immediately (silenced by 2>/dev/null) and
+    # the `&&` short-circuits, so the kill it gates on never fires and the
+    # CLI runs unbounded again. Reproduced directly. `kill -0` only checks
+    # whether a PID exists and is signalable, which has no such
+    # same-process restriction, so it works correctly from the watcher.
+    #
+    # This whole function call runs backgrounded from its caller (see the
+    # `_run_cli "$@" ... &` / `CHILD_PID=$!` site below), so cli_pid,
+    # sleep_pid, and watcher_pid are children of THIS process, not of the
+    # top-level script. `_cleanup_signal`'s `kill -TERM "$CHILD_PID"` only
+    # reaches this process itself; it cannot see these three PIDs to kill
+    # them too. Without a handler here, a TERM arriving while this branch
+    # is active (an operator or launchd interrupting an unattended run —
+    # exactly what cases 10/20 in the test suite exercise) kills this
+    # process with no trap of its own, and cli_pid/sleep_pid/watcher_pid are
+    # orphaned rather than reaped: the internal timeout sleep survives for
+    # up to the rest of its budget, and the actual CLI process keeps running
+    # against a worktree `_cleanup` is about to remove out from under it.
+    # Reproduced directly via `ps` during this fix's own verification. The
+    # local trap re-delivers the same signal to all three before this
+    # process exits, so an interrupted run is cleaned up exactly as
+    # thoroughly here as `timeout` would have made it with a real binary.
     ( cd "$WT" && exec "$CLAUDE_BIN" "$@" ) &
     local cli_pid=$!
-    ( sleep "$TIMEOUT_SECONDS"; kill -TERM "$cli_pid" 2>/dev/null ) &
+    sleep "$TIMEOUT_SECONDS" &
+    local sleep_pid=$!
+    ( while kill -0 "$sleep_pid" 2>/dev/null; do sleep 0.2; done
+      kill -TERM "$cli_pid" 2>/dev/null ) &
     local watcher_pid=$!
+    trap 'kill -TERM "$cli_pid" "$sleep_pid" "$watcher_pid" 2>/dev/null' TERM INT
     wait "$cli_pid"
     local cli_rc=$?
+    kill "$sleep_pid" 2>/dev/null
     kill "$watcher_pid" 2>/dev/null
-    wait "$watcher_pid" 2>/dev/null
+    wait "$sleep_pid" "$watcher_pid" 2>/dev/null
     [ "$cli_rc" -eq 143 ] && cli_rc=124
     return "$cli_rc"
   fi
@@ -805,6 +848,28 @@ critical, high, medium, and low, each an integer count."
   # the agent could check out, reset, or push in the developer's checkout, with
   # nothing but prompt text discouraging it. Prompt text is not a control for an
   # unattended auditor reading potentially adversarial repository content.
+  # PKG_KEY and DISPATCH_RUN_ID are built into a JSON string below through
+  # python3's json.dumps rather than hand-rolled shell interpolation: PKG_KEY
+  # is a hand-edited package name from audit/config.json (audit_dispatch.py),
+  # validated only against absolute paths and '..' (see the case statement
+  # above) — a '"' or '\' in it passes that check untouched. Naive
+  # `"...${PKG_KEY}..."` interpolation would let either character break the
+  # JSON outright, or, worse, let a crafted package name inject arbitrary
+  # keys into a --settings payload for a session already running
+  # --permission-mode acceptEdits. json.dumps is the one place in this
+  # script that owns escaping for this value, matching how _write_run_log
+  # already hands every other free-text value to Python rather than
+  # hand-escaping it into JSON itself.
+  OTEL_SETTINGS_JSON="$(PKG_KEY="$PKG_KEY" DISPATCH_RUN_ID="$DISPATCH_RUN_ID" python3 -c '
+import json
+import os
+
+attrs = ("service.name=claude-code,deployment.environment=hdc-local,"
+         "audit.package=%s,parent.run=%s"
+         % (os.environ["PKG_KEY"], os.environ["DISPATCH_RUN_ID"]))
+print(json.dumps({"env": {"OTEL_RESOURCE_ATTRIBUTES": attrs}}))
+')"
+
   set -- \
     -p "$PROMPT" \
     --agent repo-security-auditor \
@@ -817,7 +882,7 @@ critical, high, medium, and low, each an integer count."
     --permission-mode acceptEdits \
     --output-format json \
     --max-turns "$MAX_TURNS" \
-    --settings "{\"env\":{\"OTEL_RESOURCE_ATTRIBUTES\":\"service.name=claude-code,deployment.environment=hdc-local,audit.package=${PKG_KEY},parent.run=${DISPATCH_RUN_ID}\"}}"
+    --settings "$OTEL_SETTINGS_JSON"
 
   # Backgrounded and waited on, rather than run in the foreground: bash defers a
   # trapped signal until the current foreground command returns, so a TERM from

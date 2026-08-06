@@ -379,9 +379,13 @@ git -C "$PKG" worktree prune >/dev/null 2>&1
 # enforce AUDIT_TIMEOUT itself, and a run the fallback watcher kills must
 # still classify as a timeout (its SIGTERM/143 normalized to rc 124) rather
 # than hanging past the configured bound waiting out the stub's full sleep.
-# PATH is restricted to directories this machine's own gtimeout/timeout
-# binaries never live in, so the case is deterministic regardless of what
-# happens to be installed on whatever machine runs this suite.
+# PATH is restricted to /usr/bin:/bin:/usr/sbin:/sbin, which on THIS
+# machine (confirmed: `command -v gtimeout`/`timeout` are both empty here)
+# holds every other utility audit_run.sh calls but neither timeout binary.
+# This is not a universal guarantee across machines — on Linux, coreutils'
+# `timeout` typically lives in /usr/bin, so this same restricted PATH would
+# still find it there. The case is deterministic on this machine's actual
+# toolchain, not portably immune to a timeout binary showing up elsewhere.
 MINIMAL_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
 NOTIMEOUT_OUT="$TMP/no-timeout-bin.log"
@@ -400,6 +404,91 @@ ELAPSED21=$((END21 - START21))
 grep -q "timed out after 2s" "$NOTIMEOUT_OUT" \
   && pass "21b classified as a timeout with no timeout/gtimeout on PATH" \
   || die "21b not classified as a timeout: $(cat "$NOTIMEOUT_OUT")"
+
+# 22. JSON-injection safety: a --key containing '"' and '\' must not break
+# the --settings payload built for the CLI. The --key validation (the case
+# statement right after PKG_KEY is resolved, near the top of the script)
+# only rejects an absolute path or a '..' segment — a quote or backslash
+# passes it untouched, and PKG_KEY is a hand-edited package name from
+# audit/config.json (see audit_dispatch.py), not a value this script
+# controls. A stub that dumps its own argv proves the JSON payload the CLI
+# actually receives is well-formed and carries the crafted value as DATA,
+# never as a structural break or an injected key.
+ARGV_STUB="$TMP/claude-argv-dump"; cat > "$ARGV_STUB" <<EOS
+#!/bin/bash
+printf '%s\n' "\$@" > "$TMP/case22-argv.txt"
+wt=""; while [ \$# -gt 0 ]; do [ "\$1" = "--add-dir" ] && wt="\$2"; shift; done
+printf '# Security Audit\n\nNo findings.\n' > "\$wt/SECURITY_AUDIT.md"
+echo '{"result":"ok","findings":{"critical":0,"high":0,"medium":0,"low":0}}'
+EOS
+chmod +x "$ARGV_STUB"
+INJECT_KEY='evil"back\slash'
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+AUDIT_CLAUDE_BIN="$ARGV_STUB" bash "$SCRIPT" "$PKG" "$STORE" --key "$INJECT_KEY" \
+  >/dev/null 2>&1
+rc=$?
+[ $rc -eq 0 ] \
+  && pass "22 a --key containing a quote and a backslash still completes the run" \
+  || die "22 the run failed with a quote/backslash key (exit $rc)"
+
+# The argument immediately following the literal `--settings` token, taken
+# verbatim from the dumped argv — this is exactly what the real CLI would
+# receive on argv, not a re-parsed or re-escaped copy of it.
+SETTINGS_VALUE="$(awk '
+  found { print; exit }
+  $0 == "--settings" { found = 1 }
+' "$TMP/case22-argv.txt")"
+python3 -c '
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+assert list(data.keys()) == ["env"], "unexpected top-level keys: %r" % (data,)
+attrs = data["env"]["OTEL_RESOURCE_ATTRIBUTES"]
+assert "evil" in attrs and "back" in attrs and "slash" in attrs, \
+    "the crafted key did not survive into the attribute value: %r" % (attrs,)
+' "$SETTINGS_VALUE" 2>"$TMP/case22-py.err"
+pyrc=$?
+[ $pyrc -eq 0 ] \
+  && pass "22b --settings JSON stays well-formed with no injected keys, key value preserved as data" \
+  || die "22b --settings JSON was malformed or carried an injected key: $(cat "$TMP/case22-py.err")"
+
+# 23. The same TERM-during-a-hung-session interrupt cases 10/20 cover, but
+# one level deeper: _run_cli's pure-bash-fallback branch backgrounds its own
+# cli/sleep/watcher PIDs as children of ITSELF, not of the top-level script
+# — `_cleanup_signal` only signals CHILD_PID (the backgrounded _run_cli
+# call), so without a trap local to that branch, TERM-ing the whole script
+# would orphan the internal timeout `sleep` (surviving up to the rest of
+# its budget — up to an hour, at the production default) rather than
+# reaping it. PATH is restricted the same way case 21 restricts it, so the
+# fallback branch is the one under test regardless of what happens to be
+# installed on whatever machine runs this suite.
+MINIMAL_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+UNIQUE_TIMEOUT=36123
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+PATH="$MINIMAL_PATH" AUDIT_TIMEOUT="$UNIQUE_TIMEOUT" AUDIT_CLAUDE_BIN="$STUB3" \
+  bash "$SCRIPT" "$PKG" "$STORE" --key trap-orphan-case >/dev/null 2>&1 &
+runner=$!
+i=0
+while [ $i -lt 100 ] && [ -z "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ]; do
+  sleep 0.1; i=$((i + 1))
+done
+[ -n "$(git -C "$PKG" worktree list | grep -v "$PKG ")" ] \
+  && pass "23 worktree registered while the trap-orphan case runs" \
+  || die "23 worktree never appeared (case cannot prove anything)"
+sleep 0.5   # let the fallback branch actually spawn cli_pid/sleep_pid/watcher_pid
+kill -TERM "$runner" 2>/dev/null
+i=0
+while [ $i -lt 50 ] && kill -0 "$runner" 2>/dev/null; do
+  sleep 0.1; i=$((i + 1))
+done
+kill -KILL "$runner" 2>/dev/null
+wait "$runner" 2>/dev/null
+sleep 0.5
+ps -ax -o command | grep -F "sleep $UNIQUE_TIMEOUT" | grep -v grep >/dev/null 2>&1 \
+  && die "23b the internal timeout sleep survived a TERM to the whole script (orphaned)" \
+  || pass "23b the internal timeout sleep does not survive a TERM to the whole script"
+git -C "$PKG" worktree prune >/dev/null 2>&1
 
 [ $fail -eq 0 ] && { echo "test_audit_run: PASS"; exit 0; }
 echo "test_audit_run: FAIL"; exit 1
