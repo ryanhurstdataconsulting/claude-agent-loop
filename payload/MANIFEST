@@ -257,6 +257,9 @@ link-dir tools/tests
 link-file launchd/com.hdc.claude-agent-loop.repo-audit.plist
 link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
 
+# --- observability/ ---------------------------------------------------------
+link-dir observability
+
 # --- templates/ (copied into a target repo by hand, never auto-installed) ----
 link-dir templates
 
