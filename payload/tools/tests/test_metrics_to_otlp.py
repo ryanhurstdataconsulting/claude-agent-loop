@@ -103,6 +103,13 @@ class MetricsToOtlpFixture(unittest.TestCase):
         hm._append_record(str(self.metrics), rec)
         return rec
 
+    def _raw(self, record):
+        """Plant an arbitrary, possibly malformed record verbatim (bypassing
+        the typed helpers above) — used to reproduce the exact bad-field
+        shapes real historical data can contain."""
+        hm._append_record(str(self.metrics), record)
+        return record
+
     def _run(self, endpoint="http://localhost:4318"):
         return mo.run_once(str(self.metrics), str(self.cursor), endpoint=endpoint)
 
@@ -122,6 +129,23 @@ class TestPureAggregation(unittest.TestCase):
         ]
         self.assertEqual(mo.aggregate_tests(recs), {"passed": 8, "failed": 1})
 
+    def test_aggregate_tests_skips_non_numeric_passed_without_raising(self):
+        # Real-world malformed shape: "passed" as a string. Must be skipped
+        # entirely (never coerced, never crashes), not silently treated as 0
+        # in a way that still corrupts "failed" on the same record.
+        recs = [
+            {"kind": "task", "tests": {"passed": "3", "failed": 1}},
+            {"kind": "task", "tests": {"passed": 5, "failed": 0}},
+        ]
+        self.assertEqual(mo.aggregate_tests(recs), {"passed": 5, "failed": 1})
+
+    def test_aggregate_tests_skips_non_dict_tests_field_without_raising(self):
+        recs = [
+            {"kind": "task", "tests": "bogus"},
+            {"kind": "task", "tests": {"passed": 2, "failed": 0}},
+        ]
+        self.assertEqual(mo.aggregate_tests(recs), {"passed": 2, "failed": 0})
+
     def test_aggregate_error_rates_excludes_missing(self):
         recs = [
             {"kind": "task", "error_rate": 0.2},
@@ -130,6 +154,14 @@ class TestPureAggregation(unittest.TestCase):
             {"kind": "task", "error_rate": 0.6},
         ]
         self.assertEqual(mo.aggregate_error_rates(recs), [0.2, 0.6])
+
+    def test_aggregate_error_rates_skips_non_numeric_without_raising(self):
+        # Real-world malformed shape: error_rate as a non-numeric string.
+        recs = [
+            {"kind": "task", "error_rate": "high"},
+            {"kind": "task", "error_rate": 0.5},
+        ]
+        self.assertEqual(mo.aggregate_error_rates(recs), [0.5])
 
     def test_aggregate_verdict_buckets_missing_key_separately(self):
         recs = [
@@ -150,6 +182,16 @@ class TestPureAggregation(unittest.TestCase):
                 {"kind": "task"}]
         self.assertEqual(mo.aggregate_verdict(recs), {mo._MISSING: 2})
 
+    def test_aggregate_verdict_skips_unhashable_value_without_raising(self):
+        # Real-world malformed shape: verdict as a dict. Must be dropped
+        # entirely -- NOT bucketed as _MISSING, which means "legitimately
+        # absent," a different signal than "present but corrupted."
+        recs = [
+            {"kind": "task", "verdict": {"x": 1}},
+            {"kind": "task", "verdict": "clean"},
+        ]
+        self.assertEqual(mo.aggregate_verdict(recs), {"clean": 1})
+
     def test_aggregate_heuristics_counts_literal_rule_string(self):
         recs = [
             {"kind": "learn", "rule": "H1"},
@@ -158,6 +200,15 @@ class TestPureAggregation(unittest.TestCase):
         ]
         counts = mo.aggregate_heuristics(recs)
         self.assertEqual(counts, {"H1": 2, "H0": 1})
+
+    def test_aggregate_heuristics_skips_unhashable_rule_without_raising(self):
+        # Real-world malformed shape: rule as a list. Must be dropped
+        # entirely, not raise TypeError: unhashable type: 'list'.
+        recs = [
+            {"kind": "learn", "rule": ["H1"]},
+            {"kind": "learn", "rule": "H2"},
+        ]
+        self.assertEqual(mo.aggregate_heuristics(recs), {"H2": 1})
 
     def test_aggregate_resources_source_mix(self):
         recs = [
@@ -168,6 +219,13 @@ class TestPureAggregation(unittest.TestCase):
         ]
         counts = mo.aggregate_resources_source(recs)
         self.assertEqual(counts, {"workorder": 1, "task": 1, "session-backfill": 2})
+
+    def test_aggregate_resources_source_skips_unhashable_value_without_raising(self):
+        recs = [
+            {"kind": "task", "resources_source": ["a"]},
+            {"kind": "task", "resources_source": "task"},
+        ]
+        self.assertEqual(mo.aggregate_resources_source(recs), {"task": 1})
 
     def test_build_aggregates_ignores_non_task_non_learn_kinds(self):
         changed = {
@@ -229,26 +287,62 @@ class TestCursorAndIdempotency(MetricsToOtlpFixture):
         self.assertEqual(second, {"exported": True, "count": 0, "reason": "ok"})
         mock_exporter.export.assert_not_called()
 
-    def test_changed_record_reexports_with_new_value_only(self):
-        self._task("agent-1", 1, error_rate=0.1)
+    @staticmethod
+    def _tests_passed_value(exported):
+        for rm in exported.resource_metrics:
+            for sm in rm.scope_metrics:
+                for m in sm.metrics:
+                    if m.name != "claude_agent_loop.tests":
+                        continue
+                    for dp in m.data.data_points:
+                        if dp.attributes.get("result") == "passed":
+                            return dp.value
+        return None
+
+    def test_second_export_reflects_full_cumulative_total_not_delta(self):
+        # Design decision 1 (as corrected by the plan owner): the cursor
+        # gates WHETHER to export, never WHAT gets exported — every actual
+        # export aggregates over the FULL current by_key snapshot, not just
+        # the delta since last run. Counters are CUMULATIVE-temporality by
+        # default; exporting a bare delta each run would make a
+        # reset-detecting `increase()` reader compute the wrong running
+        # total downstream.
+        self._task("task-a", 1, passed=3)
         mock_exporter = MagicMock()
         mock_exporter.export.return_value = MetricExportResult.SUCCESS
         with patch.object(mo, "_build_exporter", return_value=mock_exporter):
             first = self._run()
-            self.assertTrue(first["exported"])
-            # Superseding record for the SAME (task_id, kind): last-wins.
-            self._task("agent-1", 2, error_rate=0.9)
+            self.assertEqual(
+                self._tests_passed_value(mock_exporter.export.call_args[0][0]), 3)
+
+            # A second, UNRELATED task arrives; task-a is untouched.
+            self._task("task-b", 2, passed=4)
+            mock_exporter.reset_mock()
+            second = self._run()
+        self.assertTrue(first["exported"])
+        self.assertEqual(second["count"], 1)   # only task-b's key is "changed"
+        mock_exporter.export.assert_called_once()
+        # The exported TOTAL must be 3+4=7 (task-a's stable contribution
+        # plus task-b's new one) -- never 4 (task-b's delta alone).
+        self.assertEqual(
+            self._tests_passed_value(mock_exporter.export.call_args[0][0]), 7)
+
+    def test_superseded_record_second_export_shows_corrected_total_not_sum(self):
+        self._task("agent-1", 1, passed=3)
+        mock_exporter = MagicMock()
+        mock_exporter.export.return_value = MetricExportResult.SUCCESS
+        with patch.object(mo, "_build_exporter", return_value=mock_exporter):
+            self._run()
+            # Superseding record for the SAME (task_id, kind): last-wins
+            # replaces the value; it must not ADD to the old one.
+            self._task("agent-1", 2, passed=5)
             mock_exporter.reset_mock()
             second = self._run()
         self.assertEqual(second["count"], 1)
         mock_exporter.export.assert_called_once()
-        exported = mock_exporter.export.call_args[0][0]
-        # Only the LATEST value (0.9) was in this run's aggregate, never both.
-        values = [dp.sum for rm in exported.resource_metrics
-                  for sm in rm.scope_metrics for m in sm.metrics
-                  if m.name == "claude_agent_loop.error_rate"
-                  for dp in m.data.data_points]
-        self.assertEqual(values, [0.9])
+        # The corrected total is 5 (the latest value), never 3+5=8.
+        self.assertEqual(
+            self._tests_passed_value(mock_exporter.export.call_args[0][0]), 5)
 
     def test_cursor_file_written_atomically_with_content_hash_keys(self):
         self._task("agent-1", 1, error_rate=0.1)
@@ -297,6 +391,79 @@ class TestNeverMutatesShard(MetricsToOtlpFixture):
             self._run()
         after = shard.read_bytes()
         self.assertEqual(before, after)
+
+
+# --- per-record fault tolerance (Finding 2: malformed fields must never
+# wedge the cursor with an uncaught traceback -- the same failure class
+# obs_ship.py already hit and fixed for spans in Phase 2) -------------------
+
+@unittest.skipUnless(_HAS_OTEL, _OTEL_REASON)
+class TestMalformedRecordTolerance(MetricsToOtlpFixture):
+    def test_mixed_malformed_and_valid_records_do_not_crash_run_once(self):
+        # Four realistic bad-field shapes, each on its own task_id, mixed
+        # with otherwise-valid records.
+        self._raw({"schema": 1, "kind": "task", "task_id": "bad-passed",
+                   "ts_end": _ts(1), "tests": {"passed": "3", "failed": 0}})
+        self._raw({"schema": 1, "kind": "task", "task_id": "bad-error-rate",
+                   "ts_end": _ts(2), "error_rate": "high"})
+        self._raw({"schema": 1, "kind": "learn", "task_id": "bad-rule",
+                   "ts_end": _ts(3), "rule": ["H1"], "action": "theme-note"})
+        self._raw({"schema": 1, "kind": "task", "task_id": "bad-verdict",
+                   "ts_end": _ts(4), "verdict": {"x": 1}})
+        self._task("good-task", 5, verdict="clean", passed=10, failed=1,
+                   error_rate=0.2, resources_source="task")
+        self._learn("good-learn", 6, "H1")
+
+        mock_exporter = MagicMock()
+        mock_exporter.export.return_value = MetricExportResult.SUCCESS
+        with patch.object(mo, "_build_exporter", return_value=mock_exporter):
+            try:
+                result = self._run()
+            except Exception as exc:   # pragma: no cover - this IS the bug
+                self.fail("run_once raised on malformed records: %r" % exc)
+
+        self.assertTrue(result["exported"])
+        self.assertEqual(result["count"], 6)   # all 6 keys were new
+        mock_exporter.export.assert_called_once()
+
+        # The cursor must advance past EVERY key, malformed or not -- a
+        # malformed record must never be re-read (and re-crash) forever.
+        self.assertTrue(self.cursor.is_file())
+        cursor_data = json.loads(self.cursor.read_text())
+        for key in ("bad-passed:task", "bad-error-rate:task",
+                    "bad-rule:learn", "bad-verdict:task",
+                    "good-task:task", "good-learn:learn"):
+            self.assertIn(key, cursor_data)
+
+        # The valid records still aggregate and export correctly; the
+        # malformed values were skipped, never coerced or crashing.
+        exported = mock_exporter.export.call_args[0][0]
+        by_name = {}
+        for rm in exported.resource_metrics:
+            for sm in rm.scope_metrics:
+                for m in sm.metrics:
+                    by_name[m.name] = m
+
+        tests_dps = {dp.attributes["result"]: dp.value
+                     for dp in by_name["claude_agent_loop.tests"].data.data_points}
+        self.assertEqual(tests_dps, {"passed": 10, "failed": 1})
+
+        verdict_dps = {dp.attributes["verdict"]: dp.value
+                       for dp in by_name["claude_agent_loop.verdict"].data.data_points}
+        # bad-verdict's dict value is dropped entirely -- NOT bucketed as
+        # _MISSING. bad-passed and bad-error-rate legitimately lack a
+        # verdict key at all (never set one), so THEY land in _MISSING --
+        # that's design decision 2 working correctly, a separate thing from
+        # bad-verdict's malformed value being excluded outright.
+        self.assertEqual(verdict_dps, {mo._MISSING: 2, "clean": 1})
+
+        rule_dps = {dp.attributes["rule"]: dp.value
+                    for dp in by_name["claude_agent_loop.heuristic_firings"].data.data_points}
+        self.assertEqual(rule_dps, {"H1": 1})
+
+        error_rate_dps = by_name["claude_agent_loop.error_rate"].data.data_points
+        self.assertEqual(len(error_rate_dps), 1)
+        self.assertAlmostEqual(error_rate_dps[0].sum, 0.2, places=6)
 
 
 # --- CLI ---------------------------------------------------------------------

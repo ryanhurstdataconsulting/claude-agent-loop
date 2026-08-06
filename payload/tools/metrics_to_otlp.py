@@ -21,14 +21,22 @@ module's tests without a hard dependency failure.
 
 Never mutates a shard — read-only, always. Idempotent via a cursor file
 mapping ``"%s:%s" % (task_id, kind)`` to a content hash
-(``sha256(json.dumps(record, sort_keys=True))``): a record whose hash is
-unchanged since the last run is skipped; a record that is new, or whose
-last-wins value changed since the last run, is (re-)included in this run's
-aggregates and the cursor is updated with its new hash — but only once the
-export actually succeeds (mirroring obs_ship.py: a failed export must not
-advance the cursor, or the unexported delta is lost forever). "Idempotent"
-means safe to re-run without double-counting, never "writes anything back to
-the shard."
+(``sha256(json.dumps(record, sort_keys=True))``), used ONLY to gate whether
+an export happens at all: if every key's hash is unchanged since the last
+run, the network exporter is never even built (nothing new to report). Once
+that gate passes, the VALUES exported are always aggregated over the
+COMPLETE current shard snapshot, never just the changed subset — every OTel
+Counter/Histogram instrument this module builds is CUMULATIVE-temporality
+by default, so exporting a bare delta each run would report the wrong
+running total to a downstream reset-detecting reader (confirmed: a naive
+delta-only export shows a new task's count alone rather than the true
+running total, and shows a superseded record's OLD value plus its NEW value
+summed rather than the corrected total). See ``build_aggregates()`` for the
+full explanation. The cursor is updated (to the new hash of every currently
+seen key) only once the export actually succeeds (mirroring obs_ship.py: a
+failed export must not advance the cursor, or the next run's diff loses
+track of what still needs re-exporting). "Idempotent" means safe to re-run
+without double-counting, never "writes anything back to the shard."
 
 ``verdict`` is not a universal ``kind:"task"`` field (only
 ``loop_close.py``'s workorder-emitted records carry it) — a missing key, or
@@ -140,6 +148,20 @@ def select_changed(by_key, cursor):
 
 
 # --- pure aggregation (no OTel dependency; unit-testable bare) --------------
+#
+# Every aggregate_*() below is per-record fault-tolerant: a record with a
+# malformed field (wrong type — a string where a number is expected, a list/
+# dict where a hashable scalar is expected) is silently skipped for that
+# specific field/aggregate, never raised. This mirrors loop_digest.py's
+# `isinstance(r.get("error_rate"), (int, float))` guard and
+# loop_contribute.py's equivalent numeric-field check — the same defensive-
+# typing convention this codebase already uses elsewhere for the same shard
+# store, applied here because a single malformed historical record must
+# never wedge this exporter: an uncaught exception here would prevent
+# run_once() from ever advancing the cursor past that record, so every future
+# launchd invocation would re-read and re-crash on the exact same record
+# forever (the failure class obs_ship.py already hit — and fixed — for a
+# malformed span dict in Phase 2).
 
 def _bucket(value):
     """A field value, or ``_MISSING`` if the key was absent or explicitly
@@ -147,27 +169,57 @@ def _bucket(value):
     return value if value is not None else _MISSING
 
 
+def _hashable_bucket(value):
+    """``_bucket(value)``, unless ``value`` is a dict/list — unhashable, so
+    it can never be used as a Counter/OTel-attribute key. A record whose
+    field is corrupted this way is excluded from that aggregate entirely
+    (returns ``None``, a sentinel the caller must check) — NOT bucketed as
+    ``_MISSING``, which means "legitimately absent," a different signal
+    than "present but malformed."
+    """
+    if isinstance(value, (dict, list)):
+        return None
+    return _bucket(value)
+
+
+def _as_number(value):
+    """``value`` if it is int/float-like, else ``None`` — excludes bool
+    (technically an int subclass, never a legitimate count/rate in this
+    store) along with any non-numeric type (e.g. a string)."""
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None
+
+
 def aggregate_tests(task_records):
     """``{"passed": N, "failed": N}`` summed over kind:"task" records'
-    ``tests`` sub-object."""
+    ``tests`` sub-object. A record whose ``tests`` field isn't itself a dict,
+    or whose ``passed``/``failed`` isn't numeric, contributes nothing for
+    the malformed field rather than raising."""
     passed = failed = 0
     for rec in task_records:
-        tests = rec.get("tests") or {}
-        passed += tests.get("passed") or 0
-        failed += tests.get("failed") or 0
+        tests = rec.get("tests")
+        if not isinstance(tests, dict):
+            continue
+        p = _as_number(tests.get("passed"))
+        if p is not None:
+            passed += p
+        f = _as_number(tests.get("failed"))
+        if f is not None:
+            failed += f
     return {"passed": passed, "failed": failed}
 
 
 def aggregate_error_rates(task_records):
     """The raw ``error_rate`` values present on kind:"task" records.
 
-    A record missing ``error_rate`` (or carrying an explicit ``null``) is
-    EXCLUDED, not coerced to 0 — the same M1 convention
-    ``heuristics_eval._eval_mean`` uses, so an absent rate cannot silently
-    drag the distribution toward zero.
+    A record missing ``error_rate``, carrying an explicit ``null``, or
+    carrying a non-numeric value (e.g. the string "high") is EXCLUDED, not
+    coerced — the same M1 convention ``heuristics_eval._eval_mean`` uses for
+    a genuinely absent rate, extended here to also cover a corrupted one.
     """
-    return [r["error_rate"] for r in task_records
-            if r.get("error_rate") is not None]
+    return [v for r in task_records
+            for v in (_as_number(r.get("error_rate")),) if v is not None]
 
 
 def aggregate_verdict(task_records):
@@ -175,10 +227,13 @@ def aggregate_verdict(task_records):
     ``verdict`` key, or an explicit ``null`` (loop_close.py sets ``verdict``
     to ``part.get("verdict")``, which can itself be ``None``), buckets as
     ``_MISSING`` — never the string ``"unknown"`` (design decision 2:
-    verdict is not a universal kind:"task" field)."""
+    verdict is not a universal kind:"task" field). A malformed (unhashable)
+    ``verdict`` is excluded entirely, not bucketed at all."""
     counts = {}
     for rec in task_records:
-        bucket = _bucket(rec.get("verdict"))
+        bucket = _hashable_bucket(rec.get("verdict"))
+        if bucket is None:
+            continue
         counts[bucket] = counts.get(bucket, 0) + 1
     return counts
 
@@ -186,31 +241,54 @@ def aggregate_verdict(task_records):
 def aggregate_heuristics(learn_records):
     """``{rule: count}`` over kind:"learn" records, keyed by the LITERAL
     rule id string in the data (design decision 3) — never a hardcoded
-    H1-H8 enum, so an id outside that set (e.g. "H0") is still counted."""
+    H1-H8 enum, so an id outside that set (e.g. "H0") is still counted. A
+    malformed (unhashable) ``rule`` is excluded entirely."""
     counts = {}
     for rec in learn_records:
-        bucket = _bucket(rec.get("rule"))
+        bucket = _hashable_bucket(rec.get("rule"))
+        if bucket is None:
+            continue
         counts[bucket] = counts.get(bucket, 0) + 1
     return counts
 
 
 def aggregate_resources_source(task_records):
     """``{resources_source bucket: count}`` over kind:"task" records
-    (``workorder`` / ``task`` / ``session`` / ``session-backfill`` / other)."""
+    (``workorder`` / ``task`` / ``session`` / ``session-backfill`` / other).
+    A malformed (unhashable) ``resources_source`` is excluded entirely."""
     counts = {}
     for rec in task_records:
-        bucket = _bucket(rec.get("resources_source"))
+        bucket = _hashable_bucket(rec.get("resources_source"))
+        if bucket is None:
+            continue
         counts[bucket] = counts.get(bucket, 0) + 1
     return counts
 
 
-def build_aggregates(changed):
-    """Run every aggregate_*() over the changed-records set, splitting by
-    kind first. Records of any other kind (e.g. kind:"score") are read as
-    part of the last-wins scan and cursor bookkeeping, but contribute to NO
-    metric category — none of the five aggregates read them."""
-    tasks = [rec for (task_id, kind), rec in changed.items() if kind == "task"]
-    learns = [rec for (task_id, kind), rec in changed.items() if kind == "learn"]
+def build_aggregates(records_by_key):
+    """Run every aggregate_*() over ``records_by_key`` — the FULL current
+    ``{(task_id, kind): record}`` snapshot (see ``load_last_wins()``), never
+    just the subset that changed since the last run.
+
+    This matters because every OTel Counter/Histogram instrument built here
+    is CUMULATIVE-temporality by default: exporting only a delta each run
+    (the changed subset) would make every export report the wrong running
+    total to a downstream reset-detecting `increase()`/`rate()` consumer.
+    The cursor (see ``select_changed()``) still exists and still gates
+    *whether* an export happens at all — ``run_once()`` skips the network
+    call entirely when nothing changed — but once an export DOES happen, its
+    VALUES always come from the complete, current truth, never a partial
+    delta.
+
+    Records of any kind other than "task"/"learn" (e.g. kind:"score") are
+    part of the snapshot for cursor/hash bookkeeping purposes, but
+    contribute to NO metric category — none of the five aggregates read
+    them.
+    """
+    tasks = [rec for (task_id, kind), rec in records_by_key.items()
+             if kind == "task"]
+    learns = [rec for (task_id, kind), rec in records_by_key.items()
+              if kind == "learn"]
     return {
         "tests": aggregate_tests(tasks),
         "error_rates": aggregate_error_rates(tasks),
@@ -337,13 +415,25 @@ def export_aggregates(aggregates, endpoint):
 # --- orchestration ------------------------------------------------------
 
 def run_once(metrics_dir, cursor_path, endpoint="http://localhost:4318"):
+    """Scan, gate on ``changed``, but aggregate + export the FULL snapshot.
+
+    ``changed`` (see ``select_changed()``) answers only "is there anything
+    new to justify an export call at all" — an empty ``changed`` set skips
+    the network call entirely (nothing to report). Once that gate passes,
+    the VALUES exported always come from the complete current ``by_key``
+    (every task_id:kind currently in the shards), never just the changed
+    subset — see ``build_aggregates()`` for why a delta-only export would be
+    wrong for CUMULATIVE-temporality counters. ``count`` in the result is
+    the number of keys that triggered this export, not the number of
+    records whose values are IN the exported totals.
+    """
     cursor = _load_cursor(cursor_path)
     by_key = load_last_wins(metrics_dir)
     changed, new_hashes = select_changed(by_key, cursor)
     if not changed:
         return {"exported": True, "count": 0, "reason": "ok"}
 
-    aggregates = build_aggregates(changed)
+    aggregates = build_aggregates(by_key)
     ok, reason = export_aggregates(aggregates, endpoint)
     if not ok:
         return {"exported": False, "count": len(changed), "reason": reason}
