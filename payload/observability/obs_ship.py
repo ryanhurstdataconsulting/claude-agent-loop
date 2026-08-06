@@ -40,6 +40,12 @@ def _load_cursor(cursor_path):
 
 
 def _save_cursor(cursor_path, cursor):
+    # Defensive: the default --cursor path is covered by install.sh's
+    # mkdir -p, but a custom --cursor pointed at a not-yet-existing
+    # directory would otherwise raise FileNotFoundError here.
+    cursor_dir = os.path.dirname(cursor_path)
+    if cursor_dir:
+        os.makedirs(cursor_dir, exist_ok=True)
     tmp = cursor_path + ".tmp.%d" % os.getpid()
     with open(tmp, "w") as fh:
         json.dump(cursor, fh, indent=2, sort_keys=True)
@@ -89,6 +95,13 @@ def fold_spans(events):
     by_span = {}
     order = []
     for _path, _offset, rec in events:
+        if not isinstance(rec, dict):
+            # Valid JSON, wrong shape (e.g. a bare `null`/`[]`/`"str"`/`42`
+            # NDJSON line) — read_events() only guards against JSON that
+            # fails to parse at all; this guards the "parsed fine, not an
+            # object" case. Drop it silently rather than letting `.get()`
+            # raise AttributeError and take the whole batch down with it.
+            continue
         span_id = rec.get("span_id")
         if span_id not in by_span:
             by_span[span_id] = {"trace_id": rec.get("trace_id"), "span_id": span_id,
@@ -213,9 +226,9 @@ def _to_readable_span(span_dict, tracer, id_generator):
 
 
 def export_spans(spans, endpoint):
-    """Best-effort OTLP export. Returns True on success, False on any failure
-    — including an unreachable endpoint, which is the expected state until
-    Phase 0 stands up a backend.
+    """Best-effort OTLP export. Returns True on success, False on any
+    exporter-level failure — including an unreachable endpoint, which is
+    the expected state until Phase 0 stands up a backend.
 
     Builds real opentelemetry.sdk.trace ReadableSpan objects (via
     _to_readable_span/_build_tracer) before calling the exporter — the real
@@ -227,15 +240,41 @@ def export_spans(spans, endpoint):
     opentelemetry-sdk 1.41.1). SpanExportResult is a plain Enum, not
     IntEnum — `bool(SpanExportResult.FAILURE)` is also True, so success is
     checked by explicit comparison to SpanExportResult.SUCCESS, never by
-    truthiness."""
+    truthiness.
+
+    Span construction is deliberately OUTSIDE the network try/except and is
+    per-record fault-tolerant: one malformed span dict (e.g. a record with a
+    missing/unparseable `ts`, so fold_spans() left start_ts=None and
+    _iso_to_ns(None) raises) is dropped silently rather than aborting the
+    whole batch. Before this, _to_readable_span() ran INSIDE the same
+    try/except that governs cursor advancement, so a single bad record made
+    export_spans() report failure for the entire batch — indistinguishable
+    from "no backend yet" — permanently, since the cursor never advances
+    past a batch it thinks failed to export, and every future run hits the
+    exact same unfixable record again. Only the actual network
+    exporter.export() call is guarded by the try/except that decides cursor
+    advancement now."""
     if not spans:
         return True
+    try:
+        tracer, id_generator = _build_tracer()
+    except Exception:
+        return False
+
+    readable = []
+    for span_dict in spans:
+        try:
+            readable.append(_to_readable_span(span_dict, tracer, id_generator))
+        except Exception:
+            continue  # drop the one bad span; don't wedge the whole batch
+
+    if not readable:
+        return True  # nothing left to export is not a failure
+
     try:
         from opentelemetry.sdk.trace.export import SpanExportResult
 
         exporter = _build_exporter(endpoint)
-        tracer, id_generator = _build_tracer()
-        readable = [_to_readable_span(s, tracer, id_generator) for s in spans]
         result = exporter.export(readable)
         return result == SpanExportResult.SUCCESS
     except Exception:
