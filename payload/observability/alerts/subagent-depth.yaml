@@ -1,0 +1,46 @@
+# subagent-depth.yaml — Grafana unified-alerting provisioning format
+# (best-effort shape; unvalidated against a live Grafana instance in this
+# build — see payload/observability/README.md).
+#
+# Condition: subagent nesting depth >= 3 within a single trace_id, walked
+# from obs.v1 events' agent_id and parent_span_id.
+#
+# Honesty note (same gap Task 2 already documented in
+# payload/observability/dashboards/subagent-fanout-depth.json, reconfirmed
+# here by re-grepping rather than trusting that prior finding): agent_id and
+# parent_span_id are real fields present on every obs.v1 record's shape
+# (payload/tools/obs_emit.py's emit(), lines ~77-99 — agent_id is a named
+# parameter, parent_span_id is popped from **attrs with a default of None),
+# but grepping every "obs_emit.emit(" call site across payload/hooks/*.sh
+# shows none of them ever passes agent_id= or parent_span_id= a real value.
+# Both are therefore always null in every record this build currently
+# emits. The query below is structurally valid against the obs.v1 schema
+# and will run without error against a live backend, but it will always
+# return zero rows — this alert cannot actually fire in this build. It is
+# not aspirational in the cost-per-day sense (the fields are real and the
+# schema slot exists today); it is inert pending a future phase threading a
+# real agent_id/parent_span_id through the hooks, exactly like the
+# subagent-fanout-depth.json dashboard's two panels.
+#
+# "3" is the depth threshold given in the source spec's condition text and
+# is left as-is (unlike hook-silent's/subagent-fanout's N, it was already
+# stated as a concrete number, not a free variable).
+apiVersion: 1
+groups:
+  - name: claude-agent-loop
+    folder: claude-agent-loop
+    interval: 5m
+    rules:
+      - uid: subagent-depth
+        title: "Subagent nesting depth >= 3 (currently unreachable — agent_id/parent_span_id always null, see comment)"
+        condition: B
+        data:
+          - refId: A
+            model:
+              query: "SELECT trace_id, count(*) AS depth FROM obs_events WHERE agent_id IS NOT NULL GROUP BY trace_id"
+          - refId: B
+            model:
+              expression: "A.depth >= 3"
+        for: 5m
+        labels:
+          severity: info

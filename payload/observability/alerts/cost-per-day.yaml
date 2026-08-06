@@ -1,0 +1,45 @@
+# cost-per-day.yaml — Grafana unified-alerting provisioning format
+# (best-effort shape; unvalidated against a live Grafana instance in this
+# build — see payload/observability/README.md).
+#
+# Condition (as given in the source spec): daily cost exceeds a threshold.
+#
+# HONEST CALLOUT — this alert has NO data source in this build. Unlike the
+# other 5 alert files, this is not a case of a real field/schema slot that
+# is merely unpopulated today (compare subagent-depth.yaml/
+# subagent-fanout.yaml, where agent_id/parent_span_id exist on every obs.v1
+# record but are always null). There is no cost or dollar-spend field
+# anywhere: grepped obs.v1's own schema (payload/tools/obs_emit.py),
+# every hook that emits into it (payload/hooks/*.sh), the metrics-shard
+# record builders (payload/tools/harvest_metrics.py, loop_close.py,
+# audit_run.sh), the OTel exporter (payload/tools/metrics_to_otlp.py — whose
+# five real instruments are claude_agent_loop.tests, .error_rate, .verdict,
+# .resources_source, .heuristic_firings, none cost-related), and the usage
+# tracker (payload/tools/usage_poll.py, payload/hooks/usage-budget.sh — these
+# track Claude usage/quota consumption, not a dollar figure). No phase of
+# this build computes or emits a cost-per-day number, in any unit, anywhere.
+# The threshold, the query below, and the field name "cost" itself are all
+# placeholders standing in for a metric that does not exist yet. This is the
+# one alert of the six that is genuinely aspirational rather than wired to
+# a real emitted field — it cannot be validated, cannot fire, and should not
+# be provisioned into a real Grafana instance until a cost-tracking phase is
+# built and a real instrument/field backs it.
+apiVersion: 1
+groups:
+  - name: claude-agent-loop
+    folder: claude-agent-loop
+    interval: 1d
+    rules:
+      - uid: cost-per-day
+        title: "Daily cost exceeds threshold (NO DATA SOURCE — aspirational placeholder, see comment)"
+        condition: B
+        data:
+          - refId: A
+            model:
+              query: "-- NOT A REAL QUERY: no cost/spend field or metric is emitted by any phase of this build. Placeholder only."
+          - refId: B
+            model:
+              expression: "false"
+        for: 0m
+        labels:
+          severity: none

@@ -13,4 +13,5 @@ services:
       - "3000:3000"   # Grafana UI
     volumes:
       - ./dashboards:/otel-lgtm/grafana/dashboards
+      - ./alerts:/otel-lgtm/grafana/provisioning/alerting
     restart: unless-stopped

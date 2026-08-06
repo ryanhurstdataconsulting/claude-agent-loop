@@ -1,0 +1,39 @@
+# subagent-fanout.yaml — Grafana unified-alerting provisioning format
+# (best-effort shape; unvalidated against a live Grafana instance in this
+# build — see payload/observability/README.md).
+#
+# Condition: >= N distinct subagents spawned within a single turn. N needs a
+# concrete stated default rather than a free variable — this file uses
+# N = 5.
+#
+# Honesty note (same gap as subagent-depth.yaml, and the one Task 2 already
+# documented in payload/observability/dashboards/subagent-fanout-depth.json):
+# agent_id and parent_span_id are real fields on every obs.v1 record's shape
+# (payload/tools/obs_emit.py's emit(), lines ~77-99), but re-grepping every
+# "obs_emit.emit(" call site in payload/hooks/*.sh confirms none of them
+# passes agent_id= or parent_span_id= a real value — both are always null in
+# every record this build currently emits. The query below is structurally
+# valid against the obs.v1 schema and will run without error against a live
+# backend, but it will always return zero rows — this alert cannot actually
+# fire in this build. Like subagent-depth.yaml, it is inert rather than
+# aspirational: the schema slot and the fields are real today, they are just
+# never populated by any current emitter, pending a future phase.
+apiVersion: 1
+groups:
+  - name: claude-agent-loop
+    folder: claude-agent-loop
+    interval: 5m
+    rules:
+      - uid: subagent-fanout
+        title: "5+ subagents spawned in one turn (currently unreachable — agent_id/parent_span_id always null, see comment)"
+        condition: B
+        data:
+          - refId: A
+            model:
+              query: "SELECT trace_id, count(DISTINCT agent_id) AS fanout FROM obs_events WHERE agent_id IS NOT NULL GROUP BY trace_id"
+          - refId: B
+            model:
+              expression: "A.fanout >= 5"
+        for: 5m
+        labels:
+          severity: info

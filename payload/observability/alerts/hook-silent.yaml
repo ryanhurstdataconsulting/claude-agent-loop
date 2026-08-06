@@ -1,0 +1,60 @@
+# hook-silent.yaml — Grafana unified-alerting provisioning format
+# (best-effort shape; unvalidated against a live Grafana instance in this
+# build — see payload/observability/README.md).
+#
+# Condition: a wired hook has produced no positive signal in the last N
+# sessions. N needs a concrete stated default rather than a free variable —
+# this file uses N = 20.
+#
+# Honesty note on coverage (grep-verified, not assumed from the source
+# spec's prose): payload/fragments/settings.fragment.json wires 11 distinct
+# hook scripts across SessionStart/PreToolUse/PostToolUse/Stop/SubagentStop/
+# SessionEnd. Every one of them emits obs_emit.emit("hook.error", ...) in its
+# trap-on-ERR handler, but that fires only on *failure* — it is not a
+# heartbeat, and its absence proves nothing about whether the hook ran.
+# Grepping every "obs_emit.emit(" call site in payload/hooks/*.sh for a
+# positive (non-error) per-invocation event turns up a real signal for only
+# 4 of the 11:
+#   - obs-events.sh    -> tool.pre / tool.post / turn.stop (fires on every
+#                         PreToolUse/PostToolUse/Stop event — the closest
+#                         thing to an unconditional per-session heartbeat)
+#   - pipeline-relay.sh -> skill.invoked (attrs.skill_name) — fires only when
+#                         a Skill tool is actually called
+#   - read-guard.sh     -> gate.decision, attrs.gate="read-guard" — fires
+#                         only on a Read tool call
+#   - workorder-gate.sh -> gate.decision, attrs.gate="workorder" — fires
+#                         only when its matcher's tool is called
+# The other 7 wired hooks (inject-resource-loop.sh, auto-update.sh,
+# precompact-event.sh, context-budget.sh, usage-budget.sh, harvest-metrics.sh,
+# loop-close.sh) have NO positive obs.v1 signal to alert on in this build:
+# the first five emit nothing but hook.error-on-failure, and
+# harvest-metrics.sh / loop-close.sh instead write kind:"task"/"run" records
+# straight into the metrics shard (a different store from obs.v1 events),
+# with loop-close.sh's write additionally gated on there being a ready work
+# order to close — so "wrote nothing this session" is its normal, healthy
+# behavior, not a silence worth alerting on. This rule is therefore scoped
+# to the 4 hooks above; it does not cover "any wired hook" as the source
+# spec's condition text implies. Even for the 3 conditional ones
+# (pipeline-relay.sh/read-guard.sh/workorder-gate.sh), a real gap of N
+# sessions without a matching tool call is unremarkable on its own — N=20 is
+# picked to make that coincidence unlikely across a real usage pattern, not
+# derived from any measured false-positive rate (none exists yet).
+apiVersion: 1
+groups:
+  - name: claude-agent-loop
+    folder: claude-agent-loop
+    interval: 1h
+    rules:
+      - uid: hook-silent
+        title: "A wired hook (obs-events / pipeline-relay / read-guard / workorder-gate) has produced no signal in the last 20 sessions"
+        condition: B
+        data:
+          - refId: A
+            model:
+              query: "SELECT hook_name, max(session_rank) AS sessions_since_last_signal FROM (SELECT 'obs-events' AS hook_name, session_id, dense_rank() OVER (ORDER BY session_id DESC) AS session_rank FROM obs_events WHERE event IN ('tool.pre','tool.post','turn.stop') UNION ALL SELECT 'pipeline-relay', session_id, dense_rank() OVER (ORDER BY session_id DESC) FROM obs_events WHERE event = 'skill.invoked' UNION ALL SELECT 'read-guard', session_id, dense_rank() OVER (ORDER BY session_id DESC) FROM obs_events WHERE event = 'gate.decision' AND attrs.gate = 'read-guard' UNION ALL SELECT 'workorder-gate', session_id, dense_rank() OVER (ORDER BY session_id DESC) FROM obs_events WHERE event = 'gate.decision' AND attrs.gate = 'workorder') GROUP BY hook_name"
+          - refId: B
+            model:
+              expression: "A.sessions_since_last_signal >= 20"
+        for: 1h
+        labels:
+          severity: warning

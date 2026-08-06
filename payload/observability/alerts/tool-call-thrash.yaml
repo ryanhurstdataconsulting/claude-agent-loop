@@ -1,0 +1,33 @@
+# tool-call-thrash.yaml — Grafana unified-alerting provisioning format
+# (best-effort shape; unvalidated against a live Grafana instance in this
+# build — see payload/observability/README.md).
+#
+# Condition: >=5 tool.post events sharing the same (tool_name, args_hash)
+# pair within a 1-minute window. Both fields confirmed real at
+# payload/hooks/obs-events.sh's PostToolUse branch (lines ~174-179): every
+# tool.post obs.v1 record carries attrs.tool_name (the tool name from the
+# PostToolUse payload) and attrs.args_hash (sha256 of the tool's input,
+# computed by _args_hash()) — the same args_hash is also set on the paired
+# tool.pre event. A cluster of identical (tool_name, args_hash) posts in a
+# short window is a proxy for a retry loop or thrash (same call repeated
+# rather than the agent making progress), not a legitimate burst of distinct
+# calls to the same tool.
+apiVersion: 1
+groups:
+  - name: claude-agent-loop
+    folder: claude-agent-loop
+    interval: 1m
+    rules:
+      - uid: tool-call-thrash
+        title: "Same tool call repeated 5+ times in 1 minute"
+        condition: B
+        data:
+          - refId: A
+            model:
+              query: "SELECT tool_name, args_hash, count(*) AS n FROM obs_events WHERE event = 'tool.post' AND ts > now() - 1m GROUP BY tool_name, args_hash"
+          - refId: B
+            model:
+              expression: "A.n >= 5"
+        for: 0m
+        labels:
+          severity: warning

@@ -1,0 +1,37 @@
+# repo-audit-silent.yaml — Grafana unified-alerting provisioning format
+# (best-effort shape; unvalidated against a live Grafana instance in this
+# build — no real backend/datasource is wired up yet, see
+# payload/observability/README.md and docker-compose.yml's own "inert until
+# started" framing).
+#
+# Condition: no kind:"run" record (schema run.v1) with run_kind:"audit" and
+# a fresh ts_end has landed in the last 26 hours. Fields confirmed real at
+# payload/tools/audit_run.sh's _emit_run_record() (lines ~427-473): every
+# repo-audit invocation appends one record shaped
+# {"schema":"run.v1","kind":"run","run_kind":"audit","outcome":...,
+# "ts_start":...,"ts_end":...} to the monthly metrics shard.
+# The nightly cadence is real too, not assumed: payload/launchd/
+# com.hdc.claude-agent-loop.repo-audit.plist sets StartCalendarInterval
+# Hour=3 Minute=17 — repo-audit fires nightly at 03:17. 26h gives roughly one
+# missed-or-delayed cycle of slack (e.g. the machine was asleep at 03:17 and
+# launchd's calendar trigger only catches up on wake) before alerting, rather
+# than tripping on every ordinary variance in exactly when the job runs.
+apiVersion: 1
+groups:
+  - name: claude-agent-loop
+    folder: claude-agent-loop
+    interval: 1h
+    rules:
+      - uid: repo-audit-silent
+        title: "repo-audit has not completed a run in 26 hours"
+        condition: B
+        data:
+          - refId: A
+            model:
+              query: "SELECT max(ts_end) FROM runs WHERE kind = 'run' AND run_kind = 'audit'"
+          - refId: B
+            model:
+              expression: "now() - A > 26h"
+        for: 1h
+        labels:
+          severity: warning
