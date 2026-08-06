@@ -103,6 +103,15 @@ class TestTraceparentHeader(unittest.TestCase):
         expected_trace = obs_emit.trace_id_for("wo-20260730-x-abc123")
         self.assertIn(expected_trace, out)
 
+    def test_traceparent_is_a_valid_w3c_shape(self):
+        # Per the W3C Trace Context spec, an all-zero parent-id (span-id)
+        # segment is explicitly invalid and conformant consumers MUST reject
+        # the whole header. Assert the full shape, not just the trace_id
+        # substring, so a regression back to the invalid form is caught.
+        out = mb.render(wo(), "p1")
+        self.assertRegex(out, r"traceparent : 00-[0-9a-f]{32}-[0-9a-f]{16}-01")
+        self.assertNotIn("-0000000000000000-", out)
+
 
 class TestErrors(unittest.TestCase):
     def test_unknown_part_raises(self):

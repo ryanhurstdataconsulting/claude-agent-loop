@@ -64,6 +64,10 @@ def render(wo, part_id):
             "No shortlist applies. Match a skill yourself if one fits, and record\n"
             "it in `skills_used`.")
 
+    plan_id = wo.get("plan_id", "") or "unknown"
+    trace_id = obs_emit.trace_id_for(plan_id)
+    span_id = obs_emit.span_id_for(plan_id, "brief|" + part_id)
+
     return BRIEF_TEMPLATE % {
         "plan_id": wo.get("plan_id", ""),
         "part_id": part["part_id"],
@@ -74,7 +78,7 @@ def render(wo, part_id):
         "skills_block": skills_block,
         "skills_note": skills_note,
         "schema": json.dumps(RETURN_SCHEMA, indent=2),
-        "traceparent": "00-%s-0000000000000000-01" % obs_emit.trace_id_for(wo.get("plan_id", "") or "unknown"),
+        "traceparent": "00-%s-%s-01" % (trace_id, span_id),
         "run_id": wo.get("plan_id", ""),
     }
 
