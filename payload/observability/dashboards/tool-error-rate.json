@@ -1,0 +1,22 @@
+{
+  "title": "Tool Error Rate",
+  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Source: obs.v1 tool.post events in ~/.claude/metrics/events/*.ndjson, emitted by payload/hooks/obs-events.sh's PostToolUse handler (Phase 1). Charts attrs.ok (false when the tool_response carried isError) and attrs.error_class (the tool_response's error field, only set when attrs.ok is false).",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Overall tool error rate",
+      "description": "Source: obs.v1 tool.post events' attrs.ok. Fraction of tool.post events with attrs.ok = false.",
+      "targets": [
+        {"query": "SELECT count(*) FILTER (WHERE attrs.ok = false) * 1.0 / count(*) AS error_rate FROM obs_events WHERE event = 'tool.post'"}
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Errors by error_class and tool_name",
+      "description": "Source: obs.v1 tool.post events' attrs.error_class grouped with attrs.tool_name, restricted to attrs.ok = false rows.",
+      "targets": [
+        {"query": "SELECT attrs.tool_name, attrs.error_class, count(*) FROM obs_events WHERE event = 'tool.post' AND attrs.ok = false GROUP BY attrs.tool_name, attrs.error_class ORDER BY count(*) DESC"}
+      ]
+    }
+  ]
+}

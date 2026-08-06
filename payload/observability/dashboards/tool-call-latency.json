@@ -1,0 +1,22 @@
+{
+  "title": "Tool Call Latency",
+  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Source: obs.v1 tool.post events in ~/.claude/metrics/events/*.ndjson, emitted by payload/hooks/obs-events.sh's PostToolUse handler (Phase 1). Charts attrs.duration_ms (the ms between a tool's paired tool.pre and tool.post events) grouped by attrs.tool_name.",
+  "panels": [
+    {
+      "type": "table",
+      "title": "p50/p95 duration_ms by tool_name",
+      "description": "Source: obs.v1 tool.post events' attrs.duration_ms, grouped by attrs.tool_name. duration_ms is null when no matching tool.pre was found to pair against (e.g. process restart mid-call) — those records are excluded from the percentile calculation, not coerced to zero.",
+      "targets": [
+        {"query": "SELECT attrs.tool_name, percentile(attrs.duration_ms, 50) AS p50_ms, percentile(attrs.duration_ms, 95) AS p95_ms FROM obs_events WHERE event = 'tool.post' AND attrs.duration_ms IS NOT NULL GROUP BY attrs.tool_name"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "duration_ms over time by tool_name",
+      "description": "Source: obs.v1 tool.post events' attrs.duration_ms plotted against ts, one series per attrs.tool_name.",
+      "targets": [
+        {"query": "SELECT ts, attrs.tool_name, attrs.duration_ms FROM obs_events WHERE event = 'tool.post' AND attrs.duration_ms IS NOT NULL ORDER BY ts"}
+      ]
+    }
+  ]
+}

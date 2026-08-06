@@ -1,0 +1,22 @@
+{
+  "title": "Skill Invocations",
+  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Source: obs.v1 skill.invoked events in ~/.claude/metrics/events/*.ndjson, emitted by payload/hooks/pipeline-relay.sh for every Skill tool call, regardless of whether that skill has a relay message defined (Phase 1). Charts attrs.skill_name (the skill's leaf name, lowercased, with any plugin prefix like \"superpowers:\" stripped).",
+  "panels": [
+    {
+      "type": "table",
+      "title": "Invocation counts by skill_name",
+      "description": "Source: obs.v1 skill.invoked events' attrs.skill_name.",
+      "targets": [
+        {"query": "SELECT attrs.skill_name, count(*) FROM obs_events WHERE event = 'skill.invoked' GROUP BY attrs.skill_name ORDER BY count(*) DESC"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Invocations over time",
+      "description": "Source: obs.v1 skill.invoked events, counted per time bucket.",
+      "targets": [
+        {"query": "SELECT time_bucket(ts) AS bucket, count(*) FROM obs_events WHERE event = 'skill.invoked' GROUP BY bucket ORDER BY bucket"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "title": "Subagent Fanout Depth",
+  "description": "NO DATA YET, BY DESIGN — confirmed by grep across every current hook that calls obs_emit.emit() (obs-events.sh, workorder-gate.sh, read-guard.sh, pipeline-relay.sh): none of them ever passes agent_id=, so the agent_id field on every obs.v1 record emitted by this build is currently always null. The two queries below are structurally valid against the obs.v1 schema and will run without error against a live backend, but every panel will render empty until a future phase threads a real agent_id through the hooks. Do not mistake an empty panel here for a backend or query bug. Query strings are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build regardless. Intended source once populated: obs.v1 events' agent_id and parent_span_id (Phase 1/2 schema fields — present in every record's shape, just not yet given a real value by any emitter), walked into a fanout depth per trace_id.",
+  "panels": [
+    {
+      "type": "table",
+      "title": "Fanout depth by agent_id (currently empty — agent_id unpopulated)",
+      "description": "Source (once populated): obs.v1 events' agent_id and parent_span_id, walked into a depth count per trace_id. Today this returns zero rows for every trace, since agent_id is always null in every currently-emitted record.",
+      "targets": [
+        {"query": "SELECT trace_id, agent_id, parent_span_id, count(*) AS depth FROM obs_events WHERE agent_id IS NOT NULL GROUP BY trace_id, agent_id, parent_span_id"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Records with a populated agent_id (expected: 0)",
+      "description": "Sanity counter that surfaces the gap above rather than hiding it: counts obs.v1 records where agent_id IS NOT NULL. Expected to read 0 until a future phase threads agent_id through the hooks.",
+      "targets": [
+        {"query": "SELECT count(*) FROM obs_events WHERE agent_id IS NOT NULL"}
+      ]
+    }
+  ]
+}

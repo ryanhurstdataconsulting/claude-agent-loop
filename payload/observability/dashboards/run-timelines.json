@@ -1,0 +1,30 @@
+{
+  "title": "Run Timelines",
+  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build (Phase 0/3 framing: inert until a backend is eventually started). Source: kind:\"run\" records (schema run.v1) in ~/.claude/metrics/*.jsonl, written by three real builders: loop_close.py (run_kind:\"subagent\"), harvest_metrics.py (run_kind:\"session\"), and audit_run.sh (run_kind:\"audit\") — Phase 2. One row per subagent/session/audit run, grouped by outcome.",
+  "panels": [
+    {
+      "type": "table",
+      "title": "Recent runs by outcome",
+      "description": "Source: kind:\"run\" records in ~/.claude/metrics/*.jsonl. Fields: ts_start, ts_end, run_kind (subagent/session/audit), outcome (success/failure/partial/interrupted), stop_reason, task_id.",
+      "targets": [
+        {"query": "SELECT ts_start, ts_end, run_kind, outcome, stop_reason, task_id FROM runs ORDER BY ts_start DESC LIMIT 100"}
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "Outcome distribution",
+      "description": "Source: kind:\"run\" records in ~/.claude/metrics/*.jsonl. Count grouped by outcome.",
+      "targets": [
+        {"query": "SELECT outcome, count(*) FROM runs GROUP BY outcome"}
+      ]
+    },
+    {
+      "type": "bargraph",
+      "title": "Runs by run_kind",
+      "description": "Source: kind:\"run\" records in ~/.claude/metrics/*.jsonl. Count grouped by run_kind, showing the split across the three real builders (loop_close.py subagent runs, harvest_metrics.py session runs, audit_run.sh audit runs).",
+      "targets": [
+        {"query": "SELECT run_kind, count(*) FROM runs GROUP BY run_kind"}
+      ]
+    }
+  ]
+}

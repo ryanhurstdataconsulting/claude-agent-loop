@@ -1,0 +1,54 @@
+{
+  "title": "Shard KPIs",
+  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Source: the OTel metrics payload/tools/metrics_to_otlp.py exports (this phase's Task 1), read-only aggregates over kind:\"task\"/kind:\"learn\" records in ~/.claude/metrics/*.jsonl. Exact instrument names as currently implemented in metrics_to_otlp.py's emit_metrics(): claude_agent_loop.tests (Counter, attribute result=passed|failed), claude_agent_loop.error_rate (Histogram, no attributes), claude_agent_loop.verdict (Counter, attribute verdict), claude_agent_loop.resources_source (Counter, attribute resources_source=workorder|task|session|session-backfill), claude_agent_loop.heuristic_firings (Counter, attribute rule=<literal rule id string>). All five are CUMULATIVE-temporality by design (see metrics_to_otlp.py's module docstring) — each export reports the complete running total, never a per-run delta.",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Tests passed vs failed",
+      "description": "Source: claude_agent_loop.tests counter, attribute result. Summed over kind:\"task\" records' tests sub-object.",
+      "targets": [
+        {"query": "SELECT result, sum(value) FROM claude_agent_loop_tests GROUP BY result"}
+      ]
+    },
+    {
+      "type": "histogram",
+      "title": "error_rate distribution",
+      "description": "Source: claude_agent_loop.error_rate histogram. Raw error_rate values across kind:\"task\" records that carry a numeric error_rate (a missing, null, or non-numeric value is excluded, not coerced to zero).",
+      "targets": [
+        {"query": "SELECT value FROM claude_agent_loop_error_rate"}
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "Verdict mix",
+      "description": "Source: claude_agent_loop.verdict counter, attribute verdict. A missing or explicit-null verdict is bucketed as <missing>, never coerced to the string \"unknown\" — verdict is not a universal kind:\"task\" field.",
+      "targets": [
+        {"query": "SELECT verdict, sum(value) FROM claude_agent_loop_verdict GROUP BY verdict"}
+      ]
+    },
+    {
+      "type": "piechart",
+      "title": "resources_source mix",
+      "description": "Source: claude_agent_loop.resources_source counter, attribute resources_source (workorder/task/session/session-backfill).",
+      "targets": [
+        {"query": "SELECT resources_source, sum(value) FROM claude_agent_loop_resources_source GROUP BY resources_source"}
+      ]
+    },
+    {
+      "type": "gauge",
+      "title": "Precise-vs-backfill attribution ratio",
+      "description": "Derived from the same claude_agent_loop.resources_source counter, split per heuristics_eval.py's PRECISE_SOURCES convention: \"task\"/\"workorder\" attributions are PRECISE (a specific task, or plan_task.py at assignment time, announced its own resources); \"session\"/\"session-backfill\" are COARSE (inherited from the session's ANNOUNCE, not per-task). Ratio = precise / (precise + coarse). Broken out as its own explicit panel per the source spec's callout, since session-backfill is the normal ~98% case in real historical data (subagents rarely announce) and a reader should never mistake a coarse-dominated total for a precise one.",
+      "targets": [
+        {"query": "SELECT sum(value) FILTER (WHERE resources_source IN ('task','workorder')) * 1.0 / sum(value) AS precise_ratio FROM claude_agent_loop_resources_source"}
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Heuristic firings by rule",
+      "description": "Source: claude_agent_loop.heuristic_firings counter, attribute rule — the literal rule-id string from kind:\"learn\" records (no hardcoded H1-H8 allowlist; a retired or renumbered id such as H0, confirmed present in real historical data, is still counted rather than dropped).",
+      "targets": [
+        {"query": "SELECT rule, sum(value) FROM claude_agent_loop_heuristic_firings GROUP BY rule ORDER BY sum(value) DESC"}
+      ]
+    }
+  ]
+}
