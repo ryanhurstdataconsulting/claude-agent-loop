@@ -68,6 +68,34 @@ class TestCursor(unittest.TestCase):
         self.assertIn(str(day_file), cursor.get("files", {}))
         self.assertGreater(cursor["files"][str(day_file)], 0)
 
+    def test_run_once_treats_corrupt_cursor_offset_as_unread_from_start(self):
+        # A hand-edited or corrupted cursor file can have a non-numeric
+        # offset for a given path (e.g. a float string or garbage). This
+        # must not crash run_once() under launchd every 60 seconds -- it
+        # should fall back to re-reading that one file from the start.
+        events_dir = self.dir / "events"
+        events_dir.mkdir()
+        day_file = events_dir / "2026-08-05.ndjson"
+        _write_ndjson(day_file, [
+            {"schema": "obs.v1", "ts": "2026-08-05T10:00:00Z", "event": "tool.pre",
+             "session_id": "s1", "trace_id": "t1", "span_id": "sp1",
+             "parent_span_id": None, "agent_id": None, "plan_id": None,
+             "part_id": None, "project": None, "attrs": {}},
+        ])
+        cursor_path = self.dir / "obs_ship.cursor.json"
+        cursor_path.write_text(json.dumps({"files": {str(day_file): "not-a-number"}}))
+        from opentelemetry.sdk.trace.export import SpanExportResult
+        mock_exporter = MagicMock()
+        mock_exporter.export.return_value = SpanExportResult.SUCCESS
+        try:
+            with patch.object(obs_ship, "_build_exporter", return_value=mock_exporter):
+                result = obs_ship.run_once(str(events_dir), str(cursor_path))
+        except Exception as exc:  # pragma: no cover - this IS the failure being tested
+            self.fail("run_once raised on a corrupt cursor offset: %r" % exc)
+        self.assertTrue(result.get("exported"))
+        self.assertEqual(result.get("count"), 1)
+        mock_exporter.export.assert_called_once()
+
     def test_cursor_does_not_advance_on_export_failure(self):
         events_dir = self.dir / "events"
         events_dir.mkdir()

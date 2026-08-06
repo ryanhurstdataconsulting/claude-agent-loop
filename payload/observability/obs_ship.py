@@ -57,7 +57,14 @@ def read_events(events_dir, cursor):
     across every *.ndjson file in events_dir, oldest file first."""
     files = cursor.get("files", {})
     for path in sorted(glob.glob(os.path.join(events_dir, "*.ndjson"))):
-        start = int(files.get(path, 0))
+        try:
+            start = int(files.get(path, 0))
+        except (TypeError, ValueError):
+            # A corrupted/hand-edited cursor entry (e.g. a float string or
+            # other garbage) must not crash the whole script under launchd
+            # every 60 seconds — fall back to re-reading this one file from
+            # the start. Safe: it just re-exports one file's events once.
+            start = 0
         try:
             size = os.path.getsize(path)
         except OSError:
