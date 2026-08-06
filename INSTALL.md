@@ -264,9 +264,8 @@ one tool in this framework with a real, non-ambient pip dependency
    ~/.claude-agent-loop/obs-venv/bin/pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
    ```
 
-2. **Load the launchd job** (bootstrap step — see the observability-layer
-   build's Phase 3 for the actual `launchctl bootstrap` invocation, batched
-   with the `repo-audit`/`usage-poll` jobs):
+2. **Load the launchd job** (one-time bootstrap step, batched with the
+   `repo-audit`/`usage-poll` jobs):
 
    ```bash
    cp ~/.claude/launchd/com.hdc.claude-agent-loop.obs-ship.plist \
@@ -282,10 +281,16 @@ one tool in this framework with a real, non-ambient pip dependency
    ```
 
 Until a real OTLP backend exists (Phase 0/3 of the observability-layer
-build), `obs_ship.py` runs every 60 seconds, finds no new events to export
-successfully against, and exits quietly — this is expected and harmless; the
-NDJSON event log is the durable record either way, and the sidecar's cursor
-simply never advances until a backend is listening.
+build), every 60-second run finds events to export but the OTLP endpoint is
+unreachable, so it spends a few seconds retrying with backoff (measured at
+roughly 7 seconds per run) before giving up and logging that retry activity
+to `StandardErrorPath`. The NDJSON event log is the durable record either
+way, and the sidecar's cursor never advances past a failed export, so no
+data is lost — but this is a known, accepted duty cycle, not a silent
+no-op, and the `StandardErrorPath` log file is unbounded and unrotated. A
+future phase should address this (log rotation or suppression, a shorter
+export timeout, or disabling retries) before running this unattended for
+extended periods.
 
 ---
 
