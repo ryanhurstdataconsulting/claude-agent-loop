@@ -226,9 +226,23 @@ def _to_readable_span(span_dict, tracer, id_generator):
 
 
 def export_spans(spans, endpoint):
-    """Best-effort OTLP export. Returns True on success, False on any
-    exporter-level failure — including an unreachable endpoint, which is
-    the expected state until Phase 0 stands up a backend.
+    """Best-effort OTLP export. Returns (success, reason):
+
+      - (True, "ok")               — normal successful export, including
+                                      the trivial "nothing to export" case.
+      - (True, "all-spans-dropped") — every span dict in the batch failed
+                                      ReadableSpan construction; the cursor
+                                      still advances (see below) but the
+                                      caller can tell this apart from a
+                                      real export.
+      - (False, "tracer-unavailable") — _build_tracer() (the SDK import/
+                                      TracerProvider step) failed.
+      - (False, "export-failed")   — spans were built but the network
+                                      export call failed or returned a
+                                      non-SUCCESS result — including an
+                                      unreachable endpoint, the expected
+                                      state until Phase 0 stands up a
+                                      backend.
 
     Builds real opentelemetry.sdk.trace ReadableSpan objects (via
     _to_readable_span/_build_tracer) before calling the exporter — the real
@@ -255,11 +269,11 @@ def export_spans(spans, endpoint):
     exporter.export() call is guarded by the try/except that decides cursor
     advancement now."""
     if not spans:
-        return True
+        return True, "ok"
     try:
         tracer, id_generator = _build_tracer()
     except Exception:
-        return False
+        return False, "tracer-unavailable"
 
     readable = []
     for span_dict in spans:
@@ -269,34 +283,36 @@ def export_spans(spans, endpoint):
             continue  # drop the one bad span; don't wedge the whole batch
 
     if not readable:
-        return True  # nothing left to export is not a failure
+        return True, "all-spans-dropped"  # nothing left to export is not a failure
 
     try:
         from opentelemetry.sdk.trace.export import SpanExportResult
 
         exporter = _build_exporter(endpoint)
         result = exporter.export(readable)
-        return result == SpanExportResult.SUCCESS
+        if result == SpanExportResult.SUCCESS:
+            return True, "ok"
+        return False, "export-failed"
     except Exception:
-        return False
+        return False, "export-failed"
 
 
 def run_once(events_dir, cursor_path, endpoint="http://localhost:4318"):
     cursor = _load_cursor(cursor_path)
     events = list(read_events(events_dir, cursor))
     if not events:
-        return {"exported": True, "count": 0}
+        return {"exported": True, "count": 0, "reason": "ok"}
     spans = fold_spans(events)
-    ok = export_spans(spans, endpoint)
+    ok, reason = export_spans(spans, endpoint)
     if not ok:
-        return {"exported": False, "count": len(events)}
+        return {"exported": False, "count": len(events), "reason": reason}
     max_offset_by_file = {}
     for path, offset, _rec in events:
         max_offset_by_file[path] = max(max_offset_by_file.get(path, 0), offset)
     cursor.setdefault("files", {})
     cursor["files"].update(max_offset_by_file)
     _save_cursor(cursor_path, cursor)
-    return {"exported": True, "count": len(events)}
+    return {"exported": True, "count": len(events), "reason": reason}
 
 
 def main(argv=None):

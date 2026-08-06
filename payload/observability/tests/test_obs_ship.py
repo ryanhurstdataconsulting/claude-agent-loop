@@ -62,7 +62,8 @@ class TestCursor(unittest.TestCase):
         # mock must return the real success value, not a bare `True`.
         mock_exporter.export.return_value = SpanExportResult.SUCCESS
         with patch.object(obs_ship, "_build_exporter", return_value=mock_exporter):
-            obs_ship.run_once(str(events_dir), str(cursor_path))
+            result = obs_ship.run_once(str(events_dir), str(cursor_path))
+        self.assertEqual(result.get("reason"), "ok")
         cursor = json.loads(cursor_path.read_text())
         self.assertIn(str(day_file), cursor.get("files", {}))
         self.assertGreater(cursor["files"][str(day_file)], 0)
@@ -83,6 +84,7 @@ class TestCursor(unittest.TestCase):
         with patch.object(obs_ship, "_build_exporter", return_value=mock_exporter):
             result = obs_ship.run_once(str(events_dir), str(cursor_path))
         self.assertFalse(result.get("exported"))
+        self.assertEqual(result.get("reason"), "export-failed")
         self.assertFalse(cursor_path.exists())
 
     def test_run_once_never_raises_on_unreachable_endpoint(self):
@@ -104,6 +106,7 @@ class TestCursor(unittest.TestCase):
         except Exception as exc:  # pragma: no cover - this IS the failure being tested
             self.fail("run_once raised instead of degrading silently: %r" % exc)
         self.assertFalse(result.get("exported"))
+        self.assertEqual(result.get("reason"), "export-failed")
 
 
 class TestMalformedRecords(unittest.TestCase):
@@ -145,6 +148,7 @@ class TestMalformedRecords(unittest.TestCase):
         # All 5 raw lines were read (4 non-dict + 1 valid record); the valid
         # record still gets folded into a span and exported normally.
         self.assertTrue(result.get("exported"))
+        self.assertEqual(result.get("reason"), "ok")
         self.assertEqual(result.get("count"), 5)
         mock_exporter.export.assert_called_once()
         exported_spans = mock_exporter.export.call_args[0][0]
@@ -173,7 +177,19 @@ class TestMalformedSpanConstruction(unittest.TestCase):
                     "events": []}
         # No _build_exporter mocking needed: export_spans() must never even
         # reach the network step once every span has been dropped.
-        self.assertTrue(obs_ship.export_spans([bad_span], "http://127.0.0.1:1"))
+        ok, reason = obs_ship.export_spans([bad_span], "http://127.0.0.1:1")
+        self.assertTrue(ok)
+        self.assertEqual(reason, "all-spans-dropped")
+
+    def test_export_spans_returns_tracer_unavailable_when_build_tracer_fails(self):
+        good_span = {"trace_id": "t1", "span_id": "sp1",
+                     "start_ts": "2026-08-05T10:00:00Z",
+                     "end_ts": "2026-08-05T10:00:00Z", "name": "turn.stop",
+                     "duration_ms": 0, "events": []}
+        with patch.object(obs_ship, "_build_tracer", side_effect=RuntimeError("no sdk")):
+            ok, reason = obs_ship.export_spans([good_span], "http://127.0.0.1:1")
+        self.assertFalse(ok)
+        self.assertEqual(reason, "tracer-unavailable")
 
     def test_run_once_does_not_wedge_cursor_on_one_bad_record_in_a_mixed_batch(self):
         events_dir = self.dir / "events"
@@ -198,6 +214,7 @@ class TestMalformedSpanConstruction(unittest.TestCase):
         with patch.object(obs_ship, "_build_exporter", return_value=mock_exporter):
             result = obs_ship.run_once(str(events_dir), str(cursor_path))
         self.assertTrue(result.get("exported"))
+        self.assertEqual(result.get("reason"), "ok")
         self.assertEqual(result.get("count"), 2)
         # Only the good span reached the exporter -- the bad one was
         # dropped, not raised, and did not abort the batch.
@@ -224,6 +241,7 @@ class TestMalformedSpanConstruction(unittest.TestCase):
         # span construction.
         result = obs_ship.run_once(str(events_dir), str(cursor_path))
         self.assertTrue(result.get("exported"))
+        self.assertEqual(result.get("reason"), "all-spans-dropped")
         self.assertEqual(result.get("count"), 1)
         cursor = json.loads(cursor_path.read_text())
         self.assertIn(str(day_file), cursor.get("files", {}))
