@@ -1,13 +1,13 @@
 {
   "title": "Shard KPIs",
-  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Source: the OTel metrics payload/tools/metrics_to_otlp.py exports (this phase's Task 1), read-only aggregates over kind:\"task\"/kind:\"learn\" records in ~/.claude/metrics/*.jsonl. Exact instrument names as currently implemented in metrics_to_otlp.py's emit_metrics(): claude_agent_loop.tests (Counter, attribute result=passed|failed), claude_agent_loop.error_rate (Histogram, no attributes), claude_agent_loop.verdict (Counter, attribute verdict), claude_agent_loop.resources_source (Counter, attribute resources_source=workorder|task|session-backfill — this aggregate is built only over kind:\"task\" records, so the sibling value \"session\" set on kind:\"session\" records never reaches it), claude_agent_loop.heuristic_firings (Counter, attribute rule=<literal rule id string>). All five are CUMULATIVE-temporality by design (see metrics_to_otlp.py's module docstring) — each export reports the complete running total, never a per-run delta.",
+  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Source: the OTel metrics payload/tools/metrics_to_otlp.py exports (this phase's Task 1), read-only aggregates over kind:\"task\"/kind:\"learn\" records in ~/.claude/metrics/*.jsonl. Exact instrument names as currently implemented in metrics_to_otlp.py's emit_metrics(): claude_agent_loop.tests (Counter, attribute result=passed|failed), claude_agent_loop.error_rate (Histogram, no attributes), claude_agent_loop.verdict (Counter, attribute verdict), claude_agent_loop.resources_source (Counter, attribute resources_source=workorder|task|session-backfill — this aggregate is built only over kind:\"task\" records, so the sibling value \"session\" set on kind:\"session\" records never reaches it), claude_agent_loop.heuristic_firings (Counter, attribute rule=<literal rule id string>). All five are CUMULATIVE-temporality by design (see metrics_to_otlp.py's module docstring) — each export reports the complete running total, never a per-run delta. Every panel query below therefore uses last(value), never sum(value): summing a CUMULATIVE series across N exports would overcount the true value by roughly N. The only exception is the precise-vs-backfill ratio panel, which sums two attribute values WITHIN the same export snapshot and divides one by the other — a ratio of same-snapshot sums is self-normalizing regardless of aggregation function, so it needs no change. A CUMULATIVE-but-can-decrease series is expected here, not a bug: because build_aggregates() re-aggregates the FULL current shard snapshot on every export (never a per-run delta), a value can legitimately drop between exports when a superseded record's contribution changes — for example, a task's verdict flipping from clean to dirty decreases the old \"clean\" count even though nothing was deleted. This dashboard intentionally carries 6 panels, more than the plan's general \"1-3 panels per dashboard\" guideline, because each one maps to one of metrics_to_otlp.py's 5 real exported metrics plus the explicitly-requested precise-vs-backfill attribution-ratio panel.",
   "panels": [
     {
       "type": "stat",
       "title": "Tests passed vs failed",
       "description": "Source: claude_agent_loop.tests counter, attribute result. Summed over kind:\"task\" records' tests sub-object.",
       "targets": [
-        {"query": "SELECT result, sum(value) FROM claude_agent_loop_tests GROUP BY result"}
+        {"query": "SELECT result, last(value) FROM claude_agent_loop_tests GROUP BY result"}
       ]
     },
     {
@@ -23,7 +23,7 @@
       "title": "Verdict mix",
       "description": "Source: claude_agent_loop.verdict counter, attribute verdict. A missing or explicit-null verdict is bucketed as <missing>, never coerced to the string \"unknown\" — verdict is not a universal kind:\"task\" field.",
       "targets": [
-        {"query": "SELECT verdict, sum(value) FROM claude_agent_loop_verdict GROUP BY verdict"}
+        {"query": "SELECT verdict, last(value) FROM claude_agent_loop_verdict GROUP BY verdict"}
       ]
     },
     {
@@ -31,7 +31,7 @@
       "title": "resources_source mix",
       "description": "Source: claude_agent_loop.resources_source counter, attribute resources_source. Only three values are reachable on this metric — workorder/task/session-backfill — since the aggregate is built solely over kind:\"task\" records; the sibling value \"session\" is set only on kind:\"session\" records (harvest_metrics.py's build_record()) and never appears here.",
       "targets": [
-        {"query": "SELECT resources_source, sum(value) FROM claude_agent_loop_resources_source GROUP BY resources_source"}
+        {"query": "SELECT resources_source, last(value) FROM claude_agent_loop_resources_source GROUP BY resources_source"}
       ]
     },
     {
@@ -47,7 +47,7 @@
       "title": "Heuristic firings by rule",
       "description": "Source: claude_agent_loop.heuristic_firings counter, attribute rule — the literal rule-id string from kind:\"learn\" records (no hardcoded H1-H8 allowlist; a retired or renumbered id such as H0, confirmed present in real historical data, is still counted rather than dropped).",
       "targets": [
-        {"query": "SELECT rule, sum(value) FROM claude_agent_loop_heuristic_firings GROUP BY rule ORDER BY sum(value) DESC"}
+        {"query": "SELECT rule, last(value) FROM claude_agent_loop_heuristic_firings GROUP BY rule ORDER BY last(value) DESC"}
       ]
     }
   ]
