@@ -1,0 +1,16 @@
+# docker-compose.yml — inert backend config for the agent-observability-layer
+# build. NOT started as part of this build (see the design spec's Phase 0
+# section) — this file exists so a human can `docker compose up` once ready,
+# at which point Phase 2's obs_ship.py sidecar and this machine's native
+# Claude Code OTel export both already point at the ports this brings up.
+services:
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: claude-agent-loop-otel-lgtm
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver (the port every phase of this build uses)
+      - "3000:3000"   # Grafana UI
+    volumes:
+      - ./dashboards:/otel-lgtm/grafana/dashboards
+    restart: unless-stopped
