@@ -11,6 +11,7 @@ TOOLS = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLS))
 
 import make_brief as mb  # noqa: E402
+import obs_emit  # noqa: E402
 import plan_task as pt  # noqa: E402
 
 
@@ -92,6 +93,15 @@ class TestCarriedRules(unittest.TestCase):
 
     def test_evidence_rule_carried(self):
         self.assertIn("evidence", mb.render(wo(), "p1").lower())
+
+
+class TestTraceparentHeader(unittest.TestCase):
+    def test_brief_includes_traceparent_and_run_id(self):
+        out = mb.render(wo(), "p1")
+        self.assertIn("traceparent :", out)
+        self.assertIn("run_id      : wo-20260730-x-abc123", out)
+        expected_trace = obs_emit.trace_id_for("wo-20260730-x-abc123")
+        self.assertIn(expected_trace, out)
 
 
 class TestErrors(unittest.TestCase):

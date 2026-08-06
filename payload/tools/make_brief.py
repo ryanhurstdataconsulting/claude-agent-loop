@@ -18,6 +18,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import obs_emit  # noqa: E402
 import plan_task  # noqa: E402
 
 RETURN_SCHEMA = {
@@ -73,6 +74,8 @@ def render(wo, part_id):
         "skills_block": skills_block,
         "skills_note": skills_note,
         "schema": json.dumps(RETURN_SCHEMA, indent=2),
+        "traceparent": "00-%s-0000000000000000-01" % obs_emit.trace_id_for(wo.get("plan_id", "") or "unknown"),
+        "run_id": wo.get("plan_id", ""),
     }
 
 
@@ -80,6 +83,15 @@ BRIEF_TEMPLATE = """You are working one part of a decomposed task, as the **%(ro
 
   plan_id : %(plan_id)s
   part_id : %(part_id)s
+
+  # traceparent/run_id are a best-effort, dispatch-time correlation
+  # identifier (deterministic from plan_id, per the observability layer's
+  # sha256 ID scheme) for external tools (tickets, logs) — they are not a
+  # guarantee that this trace_id will match every event this dispatch's
+  # hooks later emit, since those emit with session_id once one becomes
+  # available, and session_id outranks plan_id in the trace_id derivation.
+  traceparent : %(traceparent)s
+  run_id      : %(run_id)s
 
 PARENT TASK (context only — do not do all of it)
 %(task)s
