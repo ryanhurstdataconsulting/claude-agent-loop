@@ -21,9 +21,9 @@
     {
       "type": "table",
       "title": "obs_ship.py's own reason log",
-      "description": "Source: the \"reason\" field of obs_ship.py's run_once() result (ok / tracer-unavailable / all-spans-dropped / export-failed), printed as one JSON line to stdout on every invocation and captured in the obs-ship launchd job's own log file (Phase 2's final review added this field for exactly this liveness purpose).",
+      "description": "NOT A REAL QUERYABLE SOURCE YET, BY DESIGN — obs_ship.py's run_once() returns exactly THREE keys: reason (ok / tracer-unavailable / all-spans-dropped / export-failed), exported, and count. There is no ts/timestamp field; the launchd job prints that JSON as one line to stdout, and today that output lands in an unstructured stdout log file under /tmp (the launchd plist's StandardOutPath), not a queryable table — obs_ship_log is aspirational pseudo-SQL, matching the honesty standard subagent-fanout-depth.json holds for its own real gap. This panel stays aspirational until obs_ship.py's output is captured into something queryable; there is also no field to order rows by recency in the meantime.",
       "targets": [
-        {"query": "SELECT ts, reason, exported, count FROM obs_ship_log ORDER BY ts DESC LIMIT 50"}
+        {"query": "SELECT reason, exported, count FROM obs_ship_log LIMIT 50"}
       ]
     }
   ]
