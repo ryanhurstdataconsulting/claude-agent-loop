@@ -547,10 +547,12 @@ def main(argv=None):
         print("audit_dispatch: dry run — nothing was invoked")
         if not due:
             print("nothing due")
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         for entry in due:
             print("%s — %s" % (entry["package"], entry["reason"]))
-            print("  would run: bash %s %s %s --key %s"
-                  % (runner, entry["path"], root, entry["package"]))
+            run_id = "night-%s-%s" % (today, entry["package"])
+            print("  would run: bash %s %s %s --key %s --dispatch-run-id %s"
+                  % (runner, entry["path"], root, entry["package"], run_id))
         return 0
 
     if not due:

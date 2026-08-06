@@ -374,5 +374,32 @@ wait "$runner" 2>/dev/null
 rm -f "$PKG/.git/hooks/post-checkout"
 git -C "$PKG" worktree prune >/dev/null 2>&1
 
+
+# 21. No timeout/gtimeout on PATH: _run_cli's pure-bash fallback must still
+# enforce AUDIT_TIMEOUT itself, and a run the fallback watcher kills must
+# still classify as a timeout (its SIGTERM/143 normalized to rc 124) rather
+# than hanging past the configured bound waiting out the stub's full sleep.
+# PATH is restricted to directories this machine's own gtimeout/timeout
+# binaries never live in, so the case is deterministic regardless of what
+# happens to be installed on whatever machine runs this suite.
+MINIMAL_PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+git -C "$PKG" branch -D "audit/security-$(date +%F)" >/dev/null 2>&1
+NOTIMEOUT_OUT="$TMP/no-timeout-bin.log"
+START21=$(date +%s)
+PATH="$MINIMAL_PATH" AUDIT_TIMEOUT=2 AUDIT_CLAUDE_BIN="$STUB3" \
+  bash "$SCRIPT" "$PKG" "$STORE" --key no-timeout-bin-case \
+  > "$NOTIMEOUT_OUT" 2>&1
+END21=$(date +%s)
+ELAPSED21=$((END21 - START21))
+# $STUB3 (case 10's stub) sleeps 30s; a bound close to the 2s AUDIT_TIMEOUT
+# proves the fallback enforced it rather than letting the sleep run to
+# completion on its own.
+[ $ELAPSED21 -lt 15 ] \
+  && pass "21 pure-bash fallback bounds wall-clock time (${ELAPSED21}s, stub sleeps 30s)" \
+  || die "21 fallback did not bound wall-clock time (took ${ELAPSED21}s)"
+grep -q "timed out after 2s" "$NOTIMEOUT_OUT" \
+  && pass "21b classified as a timeout with no timeout/gtimeout on PATH" \
+  || die "21b not classified as a timeout: $(cat "$NOTIMEOUT_OUT")"
+
 [ $fail -eq 0 ] && { echo "test_audit_run: PASS"; exit 0; }
 echo "test_audit_run: FAIL"; exit 1

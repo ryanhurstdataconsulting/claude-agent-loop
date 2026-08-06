@@ -483,6 +483,11 @@ class TestOrchestration(unittest.TestCase):
         digest.assert_not_called()
         self.assertIn("would run", out)
         self.assertIn("--key client-dir/a", out)
+        # The dry-run print must show the SAME invocation a real run makes —
+        # run_package() always appends --dispatch-run-id, so the preview
+        # must too, in the identical "night-<date>-<package>" run-id shape.
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        self.assertIn("--dispatch-run-id night-%s-client-dir/a" % today, out)
 
     def test_the_digest_is_written_once_at_the_end(self):
         runner = self._runner(self._recording_stub())

@@ -745,7 +745,23 @@ _run_cli() {
   if [ -n "$TIMEOUT_BIN" ]; then
     ( cd "$WT" && exec "$TIMEOUT_BIN" "$TIMEOUT_SECONDS" "$CLAUDE_BIN" "$@" )
   else
-    ( cd "$WT" && exec "$CLAUDE_BIN" "$@" )
+    # No timeout/gtimeout on this machine -- reimplement the same bound in
+    # pure bash rather than exec unbounded, which would let an unattended
+    # nightly hang block the scheduler forever. Race a sleep-then-kill
+    # watcher against the CLI; if the watcher wins, the CLI dies from
+    # SIGTERM (rc 143), which we normalize to 124 so _classify_attempt's
+    # existing rc=124-means-timeout branch fires exactly as it would with
+    # a real timeout binary.
+    ( cd "$WT" && exec "$CLAUDE_BIN" "$@" ) &
+    local cli_pid=$!
+    ( sleep "$TIMEOUT_SECONDS"; kill -TERM "$cli_pid" 2>/dev/null ) &
+    local watcher_pid=$!
+    wait "$cli_pid"
+    local cli_rc=$?
+    kill "$watcher_pid" 2>/dev/null
+    wait "$watcher_pid" 2>/dev/null
+    [ "$cli_rc" -eq 143 ] && cli_rc=124
+    return "$cli_rc"
   fi
 }
 
@@ -800,7 +816,8 @@ critical, high, medium, and low, each an integer count."
                    'Bash(git status:*)' 'Bash(git rev-parse:*)' \
     --permission-mode acceptEdits \
     --output-format json \
-    --max-turns "$MAX_TURNS"
+    --max-turns "$MAX_TURNS" \
+    --settings "{\"env\":{\"OTEL_RESOURCE_ATTRIBUTES\":\"service.name=claude-code,deployment.environment=hdc-local,audit.package=${PKG_KEY},parent.run=${DISPATCH_RUN_ID}\"}}"
 
   # Backgrounded and waited on, rather than run in the foreground: bash defers a
   # trapped signal until the current foreground command returns, so a TERM from
@@ -808,16 +825,21 @@ critical, high, medium, and low, each an integer count."
   # trap until the session ended on its own. `wait` is interruptible, so the
   # worktree is removed promptly however the run is cut short.
   #
-  # OTEL_RESOURCE_ATTRIBUTES is the one OTel var this call sets itself: Phase 0
-  # already put CLAUDE_CODE_ENABLE_TELEMETRY, OTEL_METRICS_EXPORTER, and the
-  # rest in ~/.claude/settings.json, so this process's environment — and this
-  # subprocess's, inherited from it — already carries them. The globally
-  # configured resource-attributes value has no audit.package or parent.run,
-  # since only this script knows either, so this override supplies both, per
-  # invocation, without needing to touch the other exporters at all.
+  # OTEL_RESOURCE_ATTRIBUTES is threaded through the CLI's OWN --settings flag
+  # above, NOT as an env-var prefix on this call, because an env-var prefix is
+  # a verified silent no-op: the CLI's own settings.json `env` block (Phase 0
+  # already set OTEL_RESOURCE_ATTRIBUTES there, globally, with no audit.package
+  # or parent.run) overrides the inherited process environment from INSIDE the
+  # CLI, so a shell-level prefix here never reaches the exported telemetry —
+  # confirmed with two live OTLP captures during Phase 4's final review.
+  # `--settings` is the one mechanism that actually reaches the exported
+  # telemetry: it merges into the same settings layer that was winning before,
+  # rather than losing to it. The other OTel vars (CLAUDE_CODE_ENABLE_TELEMETRY,
+  # OTEL_METRICS_EXPORTER, etc.) still come from Phase 0's global
+  # ~/.claude/settings.json unchanged — only OTEL_RESOURCE_ATTRIBUTES needs a
+  # per-invocation override, since the global one lacks audit.package/parent.run.
   STARTED="$(date +%s)"
-  OTEL_RESOURCE_ATTRIBUTES="service.name=claude-code,deployment.environment=hdc-local,audit.package=${PKG_KEY},parent.run=${DISPATCH_RUN_ID}" \
-    _run_cli "$@" >"$CLI_OUT" 2>"$CLI_ERR" &
+  _run_cli "$@" >"$CLI_OUT" 2>"$CLI_ERR" &
   CHILD_PID=$!
   wait "$CHILD_PID"
   CLI_RC=$?
