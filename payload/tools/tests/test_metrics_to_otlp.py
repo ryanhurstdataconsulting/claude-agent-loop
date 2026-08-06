@@ -365,9 +365,11 @@ class TestCursorAndIdempotency(MetricsToOtlpFixture):
         self.assertFalse(self.cursor.exists())
 
     def test_score_only_change_causes_no_export_call(self):
-        # A kind that contributes to no metric category (score) is the ONLY
-        # thing that changed this run -> aggregates are all empty -> the
-        # network exporter must never even be built.
+        # The ENTIRE snapshot -- not just what changed this run -- contains
+        # only a score record: no task/learn records exist anywhere in the
+        # shards. build_aggregates() runs over the full snapshot (see its
+        # docstring), so every aggregate is empty and the network exporter
+        # must never even be built.
         self._score("agent-1", 1)
         mock_exporter = MagicMock()
         with patch.object(mo, "_build_exporter", return_value=mock_exporter):

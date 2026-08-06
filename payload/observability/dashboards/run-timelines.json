@@ -19,7 +19,7 @@
       ]
     },
     {
-      "type": "bargraph",
+      "type": "barchart",
       "title": "Runs by run_kind",
       "description": "Source: kind:\"run\" records in ~/.claude/metrics/*.jsonl. Count grouped by run_kind, showing the split across the three real builders (loop_close.py subagent runs, harvest_metrics.py session runs, audit_run.sh audit runs).",
       "targets": [

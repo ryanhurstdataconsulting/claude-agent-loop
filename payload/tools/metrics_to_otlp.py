@@ -377,11 +377,18 @@ def export_aggregates(aggregates, endpoint):
     reason)``, the same contract as obs_ship.py's ``export_spans()``:
 
       - ``(True, "ok")``              — a normal successful export.
-      - ``(True, "no-data-points")``  — every aggregate was empty (e.g. the
-                                        only changed records this run were a
-                                        kind that contributes to no metric
-                                        category, such as kind:"score"); the
-                                        network exporter is never even built.
+      - ``(True, "no-data-points")``  — every aggregate was empty because the
+                                        FULL current snapshot (see
+                                        ``build_aggregates()``) contains no
+                                        "task"/"learn" records at all, not
+                                        because of what changed THIS run —
+                                        the network exporter is never even
+                                        built. (Separately, ``run_once()``
+                                        short-circuits to ``(True, "ok")``
+                                        with ``count`` 0 before ever calling
+                                        this function when the cursor gate
+                                        finds nothing changed; that is a
+                                        different case from this one.)
       - ``(False, "meter-unavailable")`` — the SDK import/MeterProvider step
                                         failed (mirrors obs_ship.py's
                                         "tracer-unavailable").

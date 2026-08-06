@@ -26,3 +26,21 @@ the observability-layer build for the launchd bootstrap step) — `StartInterval
 60s.
 
 **Tests:** `~/.claude-agent-loop/obs-venv/bin/python3 -m unittest discover -s tests` from this directory.
+
+## `metrics_to_otlp.py`
+
+Reads `~/.claude/metrics/*.jsonl` (the shard store `heuristics_eval.py` also
+reads — `kind:"task"`/`kind:"learn"` records), aggregates them into OTel
+Counter/Histogram instruments, and exports via OTLP to `localhost:4318`.
+Invoked manually, not on a schedule.
+
+**Setup:** uses the SAME `~/.claude-agent-loop/obs-venv` as `obs_ship.py`
+above — no separate venv needed, since both tools share the same two pip
+dependencies (`opentelemetry-sdk` + `opentelemetry-exporter-otlp-proto-http`).
+
+**Run manually:** `~/.claude-agent-loop/obs-venv/bin/python3 ~/.claude/tools/metrics_to_otlp.py`
+
+**Tests:** `bash payload/observability/tests/run.sh` runs its OTel-gated
+classes under the same venv-resolved interpreter as `test_obs_ship.py`;
+`payload/tools/tests/run_all.sh` runs its OTel-free pure aggregation tests
+under bare `python3`.
