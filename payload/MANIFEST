@@ -256,6 +256,7 @@ link-dir tools/tests
 # --- launchd/ ---------------------------------------------------------------
 link-file launchd/com.hdc.claude-agent-loop.repo-audit.plist
 link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
+link-file launchd/com.hdc.claude-agent-loop.obs-ship.plist
 
 # --- observability/ ---------------------------------------------------------
 link-dir observability

@@ -250,6 +250,45 @@ step 1 to re-authenticate.
 
 ---
 
+## Observability sidecar (one-time)
+
+`payload/observability/obs_ship.py` needs a dedicated Python venv — it is the
+one tool in this framework with a real, non-ambient pip dependency
+(`opentelemetry-sdk`), because it is an out-of-tree sidecar, not a hook
+(hooks stay stdlib-only by design).
+
+1. **Create the venv and install the dependency:**
+
+   ```bash
+   python3 -m venv ~/.claude-agent-loop/obs-venv
+   ~/.claude-agent-loop/obs-venv/bin/pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+   ```
+
+2. **Load the launchd job** (bootstrap step — see the observability-layer
+   build's Phase 3 for the actual `launchctl bootstrap` invocation, batched
+   with the `repo-audit`/`usage-poll` jobs):
+
+   ```bash
+   cp ~/.claude/launchd/com.hdc.claude-agent-loop.obs-ship.plist \
+      ~/Library/LaunchAgents/
+   launchctl bootstrap gui/$(id -u) \
+      ~/Library/LaunchAgents/com.hdc.claude-agent-loop.obs-ship.plist
+   ```
+
+   Confirm it is loaded:
+
+   ```bash
+   launchctl list | grep obs-ship
+   ```
+
+Until a real OTLP backend exists (Phase 0/3 of the observability-layer
+build), `obs_ship.py` runs every 60 seconds, finds no new events to export
+successfully against, and exits quietly — this is expected and harmless; the
+NDJSON event log is the durable record either way, and the sidecar's cursor
+simply never advances until a backend is listening.
+
+---
+
 ## How to undo
 
 1. Restore your backed-up config:
