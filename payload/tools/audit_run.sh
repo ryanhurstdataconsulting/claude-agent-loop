@@ -2,6 +2,7 @@
 # audit_run.sh — one package, one unattended security audit, zero disturbance.
 #
 # usage: audit_run.sh <package-path> <store-root> [--key KEY] [--dry-run]
+#                      [--dispatch-run-id ID]
 #
 # Runs the repo-security-auditor agent headlessly against ONE package and
 # leaves the findings on an `audit/security-<date>` branch that is never
@@ -90,12 +91,16 @@ METRICS_DIR="${METRICS_DIR:-$HOME/.claude/metrics}"
 usage() {
   cat >&2 <<'EOF'
 usage: audit_run.sh <package-path> <store-root> [--key KEY] [--dry-run]
+                     [--dispatch-run-id ID]
 
   <package-path> — a git repository to audit; never modified
   <store-root> — the consolidated store (run logs land under audit/runs/)
   --key KEY — the package's config.json key, and the store path this run
               writes under (default: the package directory's basename)
   --dry-run — resolve and print the plan; create and launch nothing
+  --dispatch-run-id ID — parent run id for OTel linkage (OTEL_RESOURCE_
+                         ATTRIBUTES' parent.run); default: a value derived
+                         from this process's own PID and start time
 EOF
 }
 
@@ -120,6 +125,7 @@ PKG=""
 STORE=""
 PKG_KEY=""
 DRY_RUN=0
+DISPATCH_RUN_ID=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
@@ -128,6 +134,11 @@ while [ $# -gt 0 ]; do
       PKG_KEY="$2"; shift 2
       ;;
     --key=*) PKG_KEY="${1#--key=}"; shift ;;
+    --dispatch-run-id)
+      [ $# -ge 2 ] || usage_err "--dispatch-run-id needs a value"
+      DISPATCH_RUN_ID="$2"; shift 2
+      ;;
+    --dispatch-run-id=*) DISPATCH_RUN_ID="${1#--dispatch-run-id=}"; shift ;;
     -h|--help) usage; exit 0 ;;
     -*) usage_err "unknown flag: $1" ;;
     *)
@@ -169,6 +180,13 @@ case "$PKG_KEY" in
   /*) usage_err "--key must be relative to the store, not absolute: $PKG_KEY" ;;
   ..|../*|*/..|*/../*) usage_err "--key must not contain '..': $PKG_KEY" ;;
 esac
+
+# audit_dispatch.py's nightly sweep always passes --dispatch-run-id, so
+# OTEL_RESOURCE_ATTRIBUTES' parent.run links every package it launched in one
+# sweep back to that sweep. A direct, manual invocation still gets some
+# value stable for this one process — this PID does not change between the
+# two attempts a retry can take — rather than an empty attribute.
+[ -n "$DISPATCH_RUN_ID" ] || DISPATCH_RUN_ID="$(date +%s)-$$"
 
 DATE="$(date +%F)"
 BRANCH="audit/security-$DATE"
@@ -486,14 +504,62 @@ except Exception:
 ' >/dev/null 2>&1 || true
 }
 
+# _classify_attempt <cli_rc> <findings_file_exists: 0|1>
+# Prints exactly one of: infrastructural | model-produced | ok
+#
+# The two failure classes need telling apart because they call for opposite
+# responses. Infrastructural (the CLI itself broke, nothing was produced) is
+# worth one retry in a fresh worktree — nothing was lost by starting over.
+# Model-produced (the agent ran, but the findings are missing/empty, OR the
+# CLI exited non-zero yet still left real findings behind) is never retried:
+# retrying over real findings would discard them, and retrying a model that
+# already ran to completion and produced nothing usable would not fix
+# anything a second time either. See Phase 4 plan design decision 3.
+_classify_attempt() {
+  local rc="$1" findings_exist="$2"
+  if [ "$findings_exist" = "1" ]; then
+    if [ "$rc" = "0" ]; then
+      echo "ok"
+    else
+      echo "model-produced"   # findings landed despite a nonzero exit — never discard them
+    fi
+    return 0
+  fi
+  if [ "$rc" != "0" ]; then
+    echo "infrastructural"    # the CLI itself broke, nothing was produced
+  else
+    echo "model-produced"     # CLI reported success but wrote nothing
+  fi
+}
+
 # --- worktree, and the trap that guarantees its removal -----------------------
-# The trap is registered BEFORE `worktree add`. An interrupt landing between
-# the two would otherwise leave a worktree registered against the developer's
-# repository with nothing to clean it up. Removal is belt-and-braces: the
-# proper `worktree remove`, then `rm -rf`, then a name-matched drop of our own
-# registration — so a failure of any one of them still leaves nothing behind,
-# and none of the three can reach a worktree that is not ours.
-TMPROOT="$(mktemp -d)"
+# The trap is registered BEFORE the first worktree is even planned: WT and
+# TMPROOT start out empty below, and `_CLEANUP_DONE=1` ("nothing to clean up
+# yet") so a signal landing before `_setup_worktree` ever runs hits an armed,
+# harmless no-op rather than an unbound-variable error under `set -u` or the
+# shell's default disposition. Once a worktree exists, an interrupt landing
+# between `worktree add` and the next line would otherwise leave a worktree
+# registered against the developer's repository with nothing to clean it up.
+# Removal is belt-and-braces: the proper `worktree remove`, then `rm -rf`,
+# then a name-matched drop of our own registration — so a failure of any one
+# of them still leaves nothing behind, and none of the three can reach a
+# worktree that is not ours.
+#
+# `_run_one_attempt()` calls `_setup_worktree()` at its own start, so a retry
+# (a second attempt, after an infrastructural failure) reassigns WT/TMPROOT/
+# CLI_OUT/CLI_ERR to a brand-new attempt's paths. `_cleanup()` and the trap
+# below read those same globals at call time, so whichever worktree is
+# CURRENT is always the one they act on. The first attempt's worktree is torn
+# down explicitly and synchronously — by the same `_cleanup()` the trap would
+# otherwise call — before the second attempt's is ever created, so there is
+# never a moment where two worktrees are both "current" or where the first is
+# left registered after the second exists.
+WT=""
+TMPROOT=""
+CLI_OUT=""
+CLI_ERR=""
+_CLEANUP_DONE=1
+
 # The worktree DIRECTORY name has to be unique per run, not merely per package
 # and date. Two runs against the same package on the same day get different
 # temp roots but would otherwise land on an identical basename, and the
@@ -501,16 +567,32 @@ TMPROOT="$(mktemp -d)"
 # registration — worse than the `git worktree prune` it replaced, which never
 # touched a registration whose directory still existed. `mktemp -d` has already
 # handed us a token that is unique by construction, so reuse it rather than
-# inventing a second source of uniqueness.
+# inventing a second source of uniqueness. A retry's second attempt gets its
+# own fresh `mktemp -d`, so its worktree name is unique from the first
+# attempt's too, even though both share the same $PKG_NAME/$DATE.
 #
 # The BRANCH name is deliberately left alone: `audit/security-<date>` is what
 # makes the output findable and reviewable by a human afterwards, and it lives
 # in the package repo where no two runs share it.
-WT_TAG="$(basename "$TMPROOT")"
-WT="$TMPROOT/audit-$PKG_NAME-$DATE-$WT_TAG"
-CLI_OUT="$TMPROOT/cli-output.json"
-CLI_ERR="$TMPROOT/cli-error.log"
-_CLEANUP_DONE=0
+_setup_worktree() {
+  TMPROOT="$(mktemp -d)"
+  WT_TAG="$(basename "$TMPROOT")"
+  WT="$TMPROOT/audit-$PKG_NAME-$DATE-$WT_TAG"
+  CLI_OUT="$TMPROOT/cli-output.json"
+  CLI_ERR="$TMPROOT/cli-error.log"
+  _CLEANUP_DONE=0
+
+  # `worktree add` runs in `$PKG` and fires the audited repository's
+  # post-checkout hook, so it goes through the same helper every other
+  # hook-firing call does. It was the one that did not, and a hanging
+  # post-checkout therefore made the whole run un-interruptible: a TERM was
+  # deferred until the hook returned, and the developer's live repository was
+  # left with our worktree registered against it.
+  if ! _run_git_hooked_in "$PKG" worktree add -q --detach "$WT" "$HEAD_SHA" \
+       2>"$TMPROOT/worktree.err"; then
+    _fail_run "worktree add failed: $(tr '\n' ' ' < "$TMPROOT/worktree.err")"
+  fi
+}
 
 # Drop the administrative registration for OUR worktree and nothing else.
 #
@@ -643,19 +725,32 @@ _fail_run() {
   exit 1
 }
 
-# `worktree add` runs in `$PKG` and fires the audited repository's
-# post-checkout hook, so it goes through the same helper every other
-# hook-firing call does. It was the one that did not, and a hanging
-# post-checkout therefore made the whole run un-interruptible: a TERM was
-# deferred until the hook returned, and the developer's live repository was
-# left with our worktree registered against it.
-if ! _run_git_hooked_in "$PKG" worktree add -q --detach "$WT" "$HEAD_SHA" \
-     2>"$TMPROOT/worktree.err"; then
-  _fail_run "worktree add failed: $(tr '\n' ' ' < "$TMPROOT/worktree.err")"
-fi
+_run_cli() {
+  if [ -n "$TIMEOUT_BIN" ]; then
+    ( cd "$WT" && exec "$TIMEOUT_BIN" "$TIMEOUT_SECONDS" "$CLAUDE_BIN" "$@" )
+  else
+    ( cd "$WT" && exec "$CLAUDE_BIN" "$@" )
+  fi
+}
 
-# --- the headless agent run ---------------------------------------------------
-PROMPT="Audit the package at $WT for security and production-readiness.
+# _run_one_attempt <attempt: 1|2>
+# Sets up a fresh worktree, runs the CLI inside it, and classifies the
+# result. A "model-produced" failure (findings missing/empty despite a clean
+# exit, or present despite a dirty one) or the SECOND attempt's own
+# infrastructural failure calls the existing `_fail_run` directly, which
+# exits 1 and never returns here. A classification of "ok" falls through to
+# the existing gate/branch/commit success path below, unchanged, ending in
+# `exit 0`. The ONLY case that returns to its caller instead of exiting the
+# process is a FIRST-attempt infrastructural failure: it tears down its own
+# worktree before returning, so the top-level driver at the bottom of this
+# script can call this function again for a fresh second attempt with
+# nothing left over from the first. See Phase 4 plan design decisions 2/3.
+_run_one_attempt() {
+  ATTEMPT="$1"
+  _setup_worktree
+
+  # --- the headless agent run -------------------------------------------------
+  PROMPT="Audit the package at $WT for security and production-readiness.
 
 This is a scheduled, unattended run against a throwaway git worktree checked
 out detached at $HEAD_SHA. The developer's live checkout is elsewhere and must
@@ -671,53 +766,78 @@ whatever you leave in the working tree, after its own safety gates run.
 End your run with a JSON object carrying a \"findings\" object whose keys are
 critical, high, medium, and low, each an integer count."
 
-# The git allowlist names read-only subcommands one at a time. A blanket
-# `Bash(git:*)` would be a hole straight through this script's isolation:
-# --add-dir constrains the file tools, not Bash, and the live repository path
-# is one `git rev-parse --git-common-dir` away from inside the worktree — so
-# the agent could check out, reset, or push in the developer's checkout, with
-# nothing but prompt text discouraging it. Prompt text is not a control for an
-# unattended auditor reading potentially adversarial repository content.
-set -- \
-  -p "$PROMPT" \
-  --agent repo-security-auditor \
-  --add-dir "$WT" \
-  --allowedTools Read Grep Glob Edit Write \
-                 'Bash(pip-audit:*)' 'Bash(npm audit:*)' \
-                 'Bash(gitleaks:*)' 'Bash(semgrep:*)' \
-                 'Bash(git log:*)' 'Bash(git diff:*)' 'Bash(git ls-files:*)' \
-                 'Bash(git status:*)' 'Bash(git rev-parse:*)' \
-  --permission-mode acceptEdits \
-  --output-format json \
-  --max-turns "$MAX_TURNS"
+  # The git allowlist names read-only subcommands one at a time. A blanket
+  # `Bash(git:*)` would be a hole straight through this script's isolation:
+  # --add-dir constrains the file tools, not Bash, and the live repository path
+  # is one `git rev-parse --git-common-dir` away from inside the worktree — so
+  # the agent could check out, reset, or push in the developer's checkout, with
+  # nothing but prompt text discouraging it. Prompt text is not a control for an
+  # unattended auditor reading potentially adversarial repository content.
+  set -- \
+    -p "$PROMPT" \
+    --agent repo-security-auditor \
+    --add-dir "$WT" \
+    --allowedTools Read Grep Glob Edit Write \
+                   'Bash(pip-audit:*)' 'Bash(npm audit:*)' \
+                   'Bash(gitleaks:*)' 'Bash(semgrep:*)' \
+                   'Bash(git log:*)' 'Bash(git diff:*)' 'Bash(git ls-files:*)' \
+                   'Bash(git status:*)' 'Bash(git rev-parse:*)' \
+    --permission-mode acceptEdits \
+    --output-format json \
+    --max-turns "$MAX_TURNS"
 
-_run_cli() {
-  if [ -n "$TIMEOUT_BIN" ]; then
-    ( cd "$WT" && exec "$TIMEOUT_BIN" "$TIMEOUT_SECONDS" "$CLAUDE_BIN" "$@" )
-  else
-    ( cd "$WT" && exec "$CLAUDE_BIN" "$@" )
-  fi
-}
+  # Backgrounded and waited on, rather than run in the foreground: bash defers a
+  # trapped signal until the current foreground command returns, so a TERM from
+  # launchd during a long — or hung — agent session would not reach the cleanup
+  # trap until the session ended on its own. `wait` is interruptible, so the
+  # worktree is removed promptly however the run is cut short.
+  #
+  # OTEL_RESOURCE_ATTRIBUTES is the one OTel var this call sets itself: Phase 0
+  # already put CLAUDE_CODE_ENABLE_TELEMETRY, OTEL_METRICS_EXPORTER, and the
+  # rest in ~/.claude/settings.json, so this process's environment — and this
+  # subprocess's, inherited from it — already carries them. The globally
+  # configured resource-attributes value has no audit.package or parent.run,
+  # since only this script knows either, so this override supplies both, per
+  # invocation, without needing to touch the other exporters at all.
+  STARTED="$(date +%s)"
+  OTEL_RESOURCE_ATTRIBUTES="service.name=claude-code,deployment.environment=hdc-local,audit.package=${PKG_KEY},parent.run=${DISPATCH_RUN_ID}" \
+    _run_cli "$@" >"$CLI_OUT" 2>"$CLI_ERR" &
+  CHILD_PID=$!
+  wait "$CHILD_PID"
+  CLI_RC=$?
+  CHILD_PID=""
+  DURATION=$(( $(date +%s) - STARTED ))
 
-# Backgrounded and waited on, rather than run in the foreground: bash defers a
-# trapped signal until the current foreground command returns, so a TERM from
-# launchd during a long — or hung — agent session would not reach the cleanup
-# trap until the session ended on its own. `wait` is interruptible, so the
-# worktree is removed promptly however the run is cut short.
-STARTED="$(date +%s)"
-_run_cli "$@" >"$CLI_OUT" 2>"$CLI_ERR" &
-CHILD_PID=$!
-wait "$CHILD_PID"
-CLI_RC=$?
-CHILD_PID=""
-DURATION=$(( $(date +%s) - STARTED ))
+  AUDIT_FILE="$WT/SECURITY_AUDIT.md"
+  FINDINGS_EXIST=0
+  [ -f "$AUDIT_FILE" ] && FINDINGS_EXIST=1
+  CLASSIFICATION="$(_classify_attempt "$CLI_RC" "$FINDINGS_EXIST")"
 
-if [ "$CLI_RC" -ne 0 ]; then
-  _fail_run "claude exited $CLI_RC: $(tail -1 "$CLI_ERR" 2>/dev/null)"
-fi
+  case "$CLASSIFICATION" in
+    infrastructural)
+      if [ "$ATTEMPT" -eq 1 ]; then
+        MSG="attempt 1 hit an infrastructural failure (claude exited"
+        MSG="$MSG $CLI_RC, no findings file); retrying once in a fresh"
+        MSG="$MSG worktree: $(tail -1 "$CLI_ERR" 2>/dev/null)"
+        echo "audit_run: $PKG_KEY — $MSG" >&2
+        _cleanup
+        return 2
+      fi
+      _fail_run "infrastructural failure, retried once, still failing: claude exited $CLI_RC: $(tail -1 "$CLI_ERR" 2>/dev/null)"
+      ;;
+    model-produced)
+      if [ "$FINDINGS_EXIST" -eq 1 ]; then
+        _fail_run "claude exited $CLI_RC but left findings at $AUDIT_FILE — real findings are never discarded by retrying over them, so this is treated as model-produced, not infrastructural: $(tail -1 "$CLI_ERR" 2>/dev/null)"
+      else
+        _fail_run "model produced no usable findings: $AUDIT_FILE missing or empty (claude exited $CLI_RC)"
+      fi
+      ;;
+  esac
 
-AUDIT_FILE="$WT/SECURITY_AUDIT.md"
-[ -f "$AUDIT_FILE" ] || _fail_run "the agent wrote no SECURITY_AUDIT.md"
+  # Classification is "ok" from here on: the existing gate/branch/commit
+  # success path, unchanged, indentation included — it is reproduced exactly
+  # as it read at top level before this task, so a diff against the
+  # pre-Phase-4 script lines up byte for byte on everything below.
 
 # --- safety gates, before anything is created ---------------------------------
 # Every gate runs BEFORE the branch exists, so an abort leaves the package
@@ -957,3 +1077,18 @@ case "$CRITICAL$HIGH" in
 esac
 
 exit 0
+}
+
+# --- main flow: up to two attempts --------------------------------------------
+# Every path inside `_run_one_attempt` other than a first-attempt
+# infrastructural failure ends in an `exit`, so this driver only ever needs to
+# decide whether a SECOND call is warranted — it never needs to inspect a
+# third state. `_run_one_attempt 2` itself never returns either: its own
+# infrastructural branch has `attempt -eq 1` false, so that path calls
+# `_fail_run` (exit 1) instead of returning, same as `model-produced` does on
+# either attempt.
+_run_one_attempt 1
+FIRST_ATTEMPT_RC=$?
+if [ "$FIRST_ATTEMPT_RC" -eq 2 ]; then
+  _run_one_attempt 2
+fi

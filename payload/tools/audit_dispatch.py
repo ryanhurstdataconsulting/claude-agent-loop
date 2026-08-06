@@ -393,9 +393,12 @@ def _notify(text):
 def run_package(entry, root, binary=None):
     """Run one due package's audit. Returns a result dict; never raises.
 
-    Invokes ``audit_run.sh <path> <root> --key <package>``. Passing the key
-    explicitly is what keeps the store path this run WRITES identical to the
-    one :func:`last_state` READS on the next night — see that function.
+    Invokes ``audit_run.sh <path> <root> --key <package> --dispatch-run-id
+    <run-id>``. Passing the key explicitly is what keeps the store path this
+    run WRITES identical to the one :func:`last_state` READS on the next
+    night — see that function. The run id is this sweep's own OTel linkage
+    only (``OTEL_RESOURCE_ATTRIBUTES``' ``parent.run``) — it plays no part in
+    the store path or in ``last_state``'s lookup.
 
     ``AUDIT_NOTIFY=0`` is set in the child's environment on purpose. The
     runner fires its own OS notification for a Critical/High finding, which
@@ -431,8 +434,11 @@ def run_package(entry, root, binary=None):
 
         env = dict(os.environ)
         env[NOTIFY_ENV] = "0"
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        run_id = "night-%s-%s" % (today, package)
         proc = subprocess.run(
-            ["bash", runner, result["path"], str(root), "--key", package],
+            ["bash", runner, result["path"], str(root), "--key", package,
+             "--dispatch-run-id", run_id],
             capture_output=True,
             text=True,
             env=env,
