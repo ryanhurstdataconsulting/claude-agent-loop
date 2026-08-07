@@ -16,6 +16,12 @@ Stages this tool owns:
              --assign <task_id>   re-route every open (not done/failed) step
              --show <task_id>     print a plan
 
+  RECORD     --record <task_id> --step <id> --json <file-or-json>
+             ``--json`` takes EITHER a path to a file holding the subagent's
+             return JSON or the JSON text itself. Prefer the file: a real
+             return's prose carries quotes and newlines that shell quoting
+             mangles.
+
 ``create()`` (``--new`` / ``--from-plan``) returns a plan whose every step is
 already routed to a role (``route_role.route()``), tiered to a model
 (``model_for()``), and rendered into a full dispatchable subagent prompt
@@ -130,8 +136,20 @@ def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def termination_for(success_when=None, max_steps=None):
+    """The plan-level ``termination`` block, per the v2 design spec's schema.
+
+    Present but INERT in Phase 1, exactly like a step's ``depends_on`` /
+    ``budget_tokens`` / ``worktree``: nothing here stops a dispatch or caps a
+    step count yet. It exists so the phase that does act on it (Phase 4/5)
+    does not have to touch this schema again.
+    """
+    return {"success_when": success_when or "", "max_steps": max_steps}
+
+
 def create(task, source, plan_doc, project, branch, roles_dir, goals=None,
-           created=None, reasoning="", budget_tokens=None, worktree=False):
+           created=None, reasoning="", budget_tokens=None, worktree=False,
+           success_when=None, max_steps=None):
     """Build a fully assigned, fully briefed plan in memory.
 
     DECOMPOSE, ASSIGN, and BRIEF happen synchronously in one pass: every step
@@ -151,6 +169,7 @@ def create(task, source, plan_doc, project, branch, roles_dir, goals=None,
         "created": created,
         "project": project,
         "git_branch": branch,
+        "termination": termination_for(success_when, max_steps),
         "steps": [],
     }
     roles = route_role.load_roles(roles_dir)
@@ -305,6 +324,34 @@ def assign(plan, roles_dir):
 
 
 # --- RECORD ------------------------------------------------------------------
+def load_return_payload(arg):
+    """Parse a ``--record --json`` argument: a FILE PATH or inline JSON text.
+
+    Both are accepted, and a file wins when the argument names one. A real
+    subagent return carries prose in ``summary`` and ``evidence`` — quotes,
+    newlines, backticks — which is exactly what a shell-quoted inline argument
+    mangles, so writing the return to a file and passing its path is the safer
+    path for actual dispatches. Inline JSON stays supported for the short,
+    hand-typed case.
+
+    Raises ``json.JSONDecodeError`` when neither reading holds, and
+    ``WorkOrderError`` when a named file exists but cannot be read.
+    """
+    try:
+        names_a_file = pathlib.Path(arg).is_file()
+    except (OSError, ValueError):
+        # A long or NUL-bearing JSON string is not a path — treat it as text.
+        names_a_file = False
+    if names_a_file:
+        try:
+            text = pathlib.Path(arg).read_text()
+        except Exception as exc:
+            raise WorkOrderError("cannot read --json file %s: %s" % (arg, exc))
+    else:
+        text = arg
+    return json.loads(text)
+
+
 def record_return(plan, step_id, payload):
     """Record a step's return value and update its status.
 
@@ -415,8 +462,16 @@ def _build_parser():
                    help="token budget applied to every step created by this call")
     p.add_argument("--worktree", action="store_true",
                    help="mark every step created by this call as needing an isolated worktree")
+    p.add_argument("--success-when", dest="success_when", default=None,
+                   help="plan-level termination condition, recorded verbatim "
+                        "(inert in Phase 1)")
+    p.add_argument("--max-steps", type=int, default=None, dest="max_steps",
+                   help="plan-level step ceiling, recorded verbatim (inert in "
+                        "Phase 1)")
     p.add_argument("--step", metavar="STEP_ID", help="step id (required with --record)")
-    p.add_argument("--json", metavar="PAYLOAD", help="return payload as JSON (required with --record)")
+    p.add_argument("--json", metavar="FILE_OR_JSON",
+                   help="return payload (required with --record): the path to "
+                        "a file holding the JSON, or the JSON text itself")
     p.add_argument("--state-dir", default=_default_state_dir())
     p.add_argument("--roles-dir", default=str(home / "agents" / "roles"))
     return p
@@ -446,11 +501,13 @@ def main(argv=None):
                 return 2
             plan = create(a.task, "plan", a.from_plan, project, branch, roles_dir,
                           goals=goals, reasoning=a.reasoning,
-                          budget_tokens=a.budget_tokens, worktree=a.worktree)
+                          budget_tokens=a.budget_tokens, worktree=a.worktree,
+                          success_when=a.success_when, max_steps=a.max_steps)
         else:
             plan = create(a.new, "direct", None, project, branch, roles_dir,
                           reasoning=a.reasoning, budget_tokens=a.budget_tokens,
-                          worktree=a.worktree)
+                          worktree=a.worktree, success_when=a.success_when,
+                          max_steps=a.max_steps)
         save(state, plan)
         print("created plan %s" % plan["task_id"])
         for step in plan["steps"]:
@@ -473,9 +530,11 @@ def main(argv=None):
                 sys.stderr.write("--record requires both --step and --json\n")
                 return 2
             try:
-                payload = json.loads(a.json)
+                payload = load_return_payload(a.json)
             except json.JSONDecodeError as exc:
-                sys.stderr.write("--json is not valid JSON: %s\n" % exc)
+                sys.stderr.write(
+                    "--json is neither a readable file nor valid JSON text: "
+                    "%s\n" % exc)
                 return 2
             plan = load(state, a.record)
             record_return(plan, a.step, payload)

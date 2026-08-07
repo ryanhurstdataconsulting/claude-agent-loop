@@ -309,6 +309,74 @@ class TestRecordReturn(TempCase):
             pt.record_return(plan, "S99", {"ok": True})
 
 
+class TestLoadReturnPayload(TempCase):
+    """--json takes a file path OR inline JSON. The shipped pipeline-relay.sh
+    directive tells sessions to pass a file; the old code only ever parsed the
+    argument as inline JSON, so following the directive failed with exit 2."""
+
+    def test_file_path_is_read_and_parsed(self):
+        p = pathlib.Path(self.tmp) / "ret.json"
+        p.write_text(json.dumps({"ok": True, "summary": "did it"}))
+        self.assertEqual(pt.load_return_payload(str(p)),
+                         {"ok": True, "summary": "did it"})
+
+    def test_inline_json_still_parsed(self):
+        self.assertEqual(pt.load_return_payload('{"ok": true}'), {"ok": True})
+
+    def test_file_wins_over_inline_reading(self):
+        # A path is never also valid JSON, but assert the precedence explicitly
+        # so a future reorder cannot silently start parsing the path as text.
+        p = pathlib.Path(self.tmp) / "wins.json"
+        p.write_text('{"ok": false, "summary": "from the file"}')
+        self.assertEqual(pt.load_return_payload(str(p))["summary"],
+                         "from the file")
+
+    def test_prose_with_quotes_and_newlines_survives_the_file_path(self):
+        # The exact case that breaks shell-quoted inline JSON: a real return's
+        # summary/evidence carries quotes, newlines, and backticks.
+        payload = {"ok": True,
+                   "summary": 'ran `pytest`, saw "3 passed"\nno failures',
+                   "evidence": "$ pytest -q\n3 passed in 0.10s\n"}
+        p = pathlib.Path(self.tmp) / "prose.json"
+        p.write_text(json.dumps(payload))
+        self.assertEqual(pt.load_return_payload(str(p)), payload)
+
+    def test_neither_a_file_nor_json_raises_decode_error(self):
+        with self.assertRaises(json.JSONDecodeError):
+            pt.load_return_payload("/no/such/file.json")
+
+    def test_very_long_inline_json_is_not_treated_as_a_path(self):
+        # An argument longer than the OS filename limit must fall through to
+        # inline parsing rather than raising ENAMETOOLONG out of is_file().
+        payload = {"ok": True, "summary": "x" * 5000}
+        self.assertEqual(pt.load_return_payload(json.dumps(payload)), payload)
+
+
+class TestTermination(TempCase):
+    """The spec's plan-level `termination` block — present and inert in Phase 1,
+    the same treatment depends_on / budget_tokens / worktree got."""
+
+    def test_termination_present_and_defaulted_on_every_new_plan(self):
+        plan = pt.create("count the rows", "direct", None, "proj", "main",
+                         self.roles_dir)
+        self.assertEqual(plan["termination"],
+                         {"success_when": "", "max_steps": None})
+
+    def test_termination_values_are_settable(self):
+        plan = pt.create("count the rows", "direct", None, "proj", "main",
+                         self.roles_dir, success_when="every test passes",
+                         max_steps=8)
+        self.assertEqual(plan["termination"],
+                         {"success_when": "every test passes", "max_steps": 8})
+
+    def test_termination_survives_a_save_load_round_trip(self):
+        plan = pt.create("count the rows", "direct", None, "proj", "main",
+                         self.roles_dir, success_when="green suite", max_steps=3)
+        pt.save(str(self.state), plan)
+        self.assertEqual(pt.load(str(self.state), plan["task_id"])["termination"],
+                         {"success_when": "green suite", "max_steps": 3})
+
+
 class TestCli(TempCase):
     def _run(self, *args):
         return subprocess.run(
@@ -401,6 +469,56 @@ class TestCli(TempCase):
         # `--record <id> --json <json>` without --step should exit 2
         r4 = self._run("--record", pid, "--json", '{"ok": true}')
         self.assertNotEqual(r4.returncode, 0)
+
+    def test_cli_record_accepts_a_json_file_path(self):
+        # pipeline-relay.sh ships `--json <file>` as the directive every
+        # writing-plans session follows; it must work end to end.
+        r = self._run("--new", "count the rows")
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        step_id = pt.load(str(self.state), pid)["steps"][0]["id"]
+
+        ret = pathlib.Path(self.tmp) / "return.json"
+        ret.write_text(json.dumps({
+            "ok": True,
+            "summary": 'ran `pytest`, saw "3 passed"\nno failures',
+            "agent_task_id": "agent-from-file",
+        }))
+        r2 = self._run("--record", pid, "--step", step_id, "--json", str(ret))
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+
+        step = pt.load(str(self.state), pid)["steps"][0]
+        self.assertEqual(step["status"], "done")
+        self.assertEqual(step["agent_task_id"], "agent-from-file")
+        self.assertIn("3 passed", step["return"]["summary"])
+
+    def test_cli_record_accepts_inline_json(self):
+        r = self._run("--new", "count the rows")
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        step_id = pt.load(str(self.state), pid)["steps"][0]["id"]
+        r2 = self._run("--record", pid, "--step", step_id,
+                       "--json", '{"ok": true, "summary": "inline"}')
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        step = pt.load(str(self.state), pid)["steps"][0]
+        self.assertEqual(step["status"], "done")
+        self.assertEqual(step["return"]["summary"], "inline")
+
+    def test_cli_record_rejects_a_bad_path_with_a_stated_reason(self):
+        r = self._run("--new", "count the rows")
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        step_id = pt.load(str(self.state), pid)["steps"][0]["id"]
+        r2 = self._run("--record", pid, "--step", step_id,
+                       "--json", "/no/such/return.json")
+        self.assertEqual(r2.returncode, 2)
+        self.assertIn("neither a readable file nor valid JSON", r2.stderr)
+
+    def test_termination_flags_applied(self):
+        r = self._run("--new", "count the rows", "--success-when",
+                      "the suite is green", "--max-steps", "8")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        plan = pt.load(str(self.state), pid)
+        self.assertEqual(plan["termination"],
+                         {"success_when": "the suite is green", "max_steps": 8})
 
 
 if __name__ == "__main__":

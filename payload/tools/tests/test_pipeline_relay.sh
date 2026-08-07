@@ -71,6 +71,12 @@ else die "2 writing-plans: missing --record step"; fi
 if contains "$out" "score_task.py --auto"; then
   pass "2 writing-plans: uses score_task.py --auto"
 else die "2 writing-plans: missing score_task.py --auto"; fi
+# The directive must not promise a --json form the tool cannot parse. It used
+# to say "--json <file>" while plan_task.py only parsed inline JSON, so every
+# session that followed the directive verbatim got exit 2.
+if contains "$out" "--json <file-or-json>"; then
+  pass "2 writing-plans: --json documented as file-or-json"
+else die "2 writing-plans: --json must be documented as <file-or-json>"; fi
 if absent "$out" "make_brief.py"; then
   pass "2 writing-plans: make_brief.py not present"
 else die "2 writing-plans: make_brief.py should be absent"; fi
