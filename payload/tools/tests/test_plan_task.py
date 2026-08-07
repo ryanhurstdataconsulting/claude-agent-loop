@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for plan_task.py — the work-order lifecycle (DECOMPOSE, ASSIGN, LOG).
+"""Tests for plan_task.py — the plan lifecycle (DECOMPOSE, ASSIGN, BRIEF).
 
 Hermetic: every test builds its own role fixtures and state directory in a
 tempdir, so the suite never reads the live ~/.claude tree.
@@ -69,12 +69,14 @@ Not a task heading.
 
 
 class TempCase(unittest.TestCase):
+    """Hermetic roles + state fixture shared by every test class below."""
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.roles = pathlib.Path(self.tmp) / "roles"
         self.roles.mkdir()
         (self.roles / "data-engineer.md").write_text(ROLE_DATA_ENGINEER)
         (self.roles / "dba.md").write_text(ROLE_DBA)
+        self.roles_dir = str(self.roles)
         self.state = pathlib.Path(self.tmp) / "state"
 
     def tearDown(self):
@@ -83,78 +85,119 @@ class TempCase(unittest.TestCase):
 
 class TestPlanId(unittest.TestCase):
     def test_deterministic_for_same_inputs(self):
-        a = pt.plan_id("rebuild the dashboard", "2026-07-30T00:00:00Z")
-        b = pt.plan_id("rebuild the dashboard", "2026-07-30T00:00:00Z")
+        a = pt.plan_id("rebuild the dashboard", "2026-08-06T00:00:00Z")
+        b = pt.plan_id("rebuild the dashboard", "2026-08-06T00:00:00Z")
         self.assertEqual(a, b)
-        self.assertTrue(a.startswith("wo-20260730-rebuild-the-dashboard-"), a)
+        self.assertTrue(a.startswith("wo-20260806-rebuild-the-dashboard-"))
 
     def test_differs_when_task_differs(self):
-        a = pt.plan_id("task one", "2026-07-30T00:00:00Z")
-        b = pt.plan_id("task two", "2026-07-30T00:00:00Z")
+        a = pt.plan_id("task one", "2026-08-06T00:00:00Z")
+        b = pt.plan_id("task two", "2026-08-06T00:00:00Z")
         self.assertNotEqual(a, b)
 
     def test_differs_when_timestamp_differs(self):
-        a = pt.plan_id("same task", "2026-07-30T00:00:00Z")
-        b = pt.plan_id("same task", "2026-07-30T00:00:01Z")
+        a = pt.plan_id("same task", "2026-08-06T00:00:00Z")
+        b = pt.plan_id("same task", "2026-08-06T00:00:01Z")
         self.assertNotEqual(a, b)
 
     def test_slug_is_bounded_and_safe(self):
-        pid = pt.plan_id("A task with / slashes and CAPS and lots of extra words here", "2026-07-30T00:00:00Z")
+        pid = pt.plan_id("A task with / slashes and CAPS and lots of extra words here", "2026-08-06T00:00:00Z")
         self.assertNotIn("/", pid)
         self.assertEqual(pid, pid.lower())
         self.assertLessEqual(len(pid), 80)
 
     def test_empty_task_still_yields_an_id(self):
-        pid = pt.plan_id("", "2026-07-30T00:00:00Z")
-        self.assertTrue(pid.startswith("wo-20260730-"))
+        pid = pt.plan_id("", "2026-08-06T00:00:00Z")
+        self.assertTrue(pid.startswith("wo-20260806-"))
 
 
-class TestCreativeGate(unittest.TestCase):
-    def test_creative_tasks_detected(self):
-        for t in ("build a new dashboard component",
-                  "redesign the report layout",
-                  "implement the caching layer",
-                  "write a new skill for the registry"):
-            self.assertTrue(pt.is_creative(t), t)
+class TestCreateNoGate(TempCase):
+    def test_creative_task_no_longer_refused(self):
+        # what used to raise CreativeTaskRefused now just succeeds
+        plan = pt.create("build a brand new dashboard component", source="direct",
+                          plan_doc=None, project="p", branch="b",
+                          roles_dir=self.roles_dir)
+        self.assertEqual(plan["schema"], 2)
+        self.assertEqual(len(plan["steps"]), 1)
 
-    def test_mechanical_tasks_not_creative(self):
-        for t in ("count the rows in the export",
-                  "rename the fixture files",
-                  "list every branch on the remote"):
-            self.assertFalse(pt.is_creative(t), t)
+    def test_no_force_kwarg_exists(self):
+        import inspect
+        self.assertNotIn("force", inspect.signature(pt.create).parameters)
 
-    def test_creative_direct_source_refused(self):
-        with self.assertRaises(pt.CreativeTaskRefused):
-            pt.create("build a new skill", source="direct", plan_doc=None,
-                      force=False, project="p", branch="b")
+    def test_creative_score_removed(self):
+        self.assertFalse(hasattr(pt, "creative_score"))
+        self.assertFalse(hasattr(pt, "CreativeTaskRefused"))
 
-    def test_refusal_names_both_superpowers(self):
-        try:
-            pt.create("design a new architecture", source="direct", plan_doc=None,
-                      force=False, project="p", branch="b")
-        except pt.CreativeTaskRefused as exc:
-            msg = str(exc)
-            self.assertIn("superpowers:brainstorming", msg)
-            self.assertIn("superpowers:writing-plans", msg)
-        else:
-            self.fail("expected CreativeTaskRefused")
 
-    def test_force_records_the_override(self):
-        wo = pt.create("build a new skill", source="direct", plan_doc=None,
-                       force=True, project="p", branch="b")
-        self.assertTrue(wo["forced"])
-        self.assertEqual(wo["source"], "direct")
+class TestCreateAssignsAndBriefs(TempCase):
+    # setUp() builds self.roles_dir exactly as TempCase (formerly TestAssign's
+    # own setUp) does — the fixture is shared, not duplicated per class.
+    def test_new_step_arrives_already_assigned_and_briefed(self):
+        plan = pt.create("write the quarterly data pipeline", source="direct",
+                          plan_doc=None, project="p", branch="b",
+                          roles_dir=self.roles_dir)
+        step = plan["steps"][0]
+        self.assertIsNotNone(step["agent"])
+        self.assertIsInstance(step["brief"], str)
+        self.assertIn(plan["task_id"], step["brief"])
+        self.assertIn(step["id"], step["brief"])
+        self.assertEqual(step["status"], "pending")
 
-    def test_plan_source_needs_no_force(self):
-        wo = pt.create("build a new skill", source="plan", plan_doc="d.md",
-                       force=False, project="p", branch="b")
-        self.assertFalse(wo["forced"])
-        self.assertEqual(wo["plan_doc"], "d.md")
+    def test_from_plan_creates_one_step_per_heading_all_briefed(self):
+        doc = "### Task 1: First thing\n### Task 2: Second thing\n"
+        plan = pt.create("parent task", source="plan", plan_doc="doc.md",
+                          project="p", branch="b", roles_dir=self.roles_dir,
+                          goals=pt.parse_plan_doc(doc))
+        self.assertEqual(len(plan["steps"]), 2)
+        for step in plan["steps"]:
+            self.assertTrue(step["brief"])
+            self.assertEqual(step["depends_on"], [])
+            self.assertIsNone(step["budget_tokens"])
+            self.assertFalse(step["worktree"])
 
-    def test_mechanical_direct_source_allowed(self):
-        wo = pt.create("count the rows in the export", source="direct",
-                       plan_doc=None, force=False, project="p", branch="b")
-        self.assertEqual(wo["source"], "direct")
+    def test_reasoning_defaults_empty_and_is_settable(self):
+        plan = pt.create("a task", source="direct", plan_doc=None, project="p",
+                          branch="b", roles_dir=self.roles_dir)
+        self.assertEqual(plan["supervisor_reasoning"], "")
+        plan2 = pt.create("a task", source="direct", plan_doc=None, project="p",
+                          branch="b", roles_dir=self.roles_dir,
+                          reasoning="routed to generalist, low ambiguity")
+        self.assertEqual(plan2["supervisor_reasoning"],
+                         "routed to generalist, low ambiguity")
+
+
+class TestDatePartitionedPersistence(TempCase):
+    def test_round_trip_uses_date_from_task_id(self):
+        with tempfile.TemporaryDirectory() as base:
+            plan = pt.create("x", source="direct", plan_doc=None, project="p",
+                             branch="b", roles_dir=self.roles_dir,
+                             created="2026-08-06T12:00:00Z")
+            pt.save(base, plan)
+            expected = pathlib.Path(base) / "2026-08-06" / (plan["task_id"] + ".json")
+            self.assertTrue(expected.is_file())
+            loaded = pt.load(base, plan["task_id"])
+            self.assertEqual(loaded, plan)
+
+    def test_unknown_schema_rejected(self):
+        with tempfile.TemporaryDirectory() as base:
+            d = pathlib.Path(base) / "2026-08-06"
+            d.mkdir(parents=True)
+            (d / "wo-20260806-x-abc123.json").write_text('{"schema": 1, "task_id": "wo-20260806-x-abc123"}')
+            with self.assertRaises(pt.WorkOrderError):
+                pt.load(base, "wo-20260806-x-abc123")
+
+    def test_missing_plan_rejected(self):
+        with tempfile.TemporaryDirectory() as base:
+            with self.assertRaises(pt.WorkOrderError):
+                pt.load(base, "wo-20260806-nope-000000")
+
+    def test_malformed_json_rejected(self):
+        with tempfile.TemporaryDirectory() as base:
+            d = pathlib.Path(base) / "2026-08-06"
+            d.mkdir(parents=True)
+            (d / "wo-20260806-bad-abc123.json").write_text("{not json")
+            with self.assertRaises(pt.WorkOrderError):
+                pt.load(base, "wo-20260806-bad-abc123")
 
 
 class TestPlanDocParse(unittest.TestCase):
@@ -174,73 +217,44 @@ class TestPlanDocParse(unittest.TestCase):
             pt.parse_plan_doc("")
 
 
-class TestSchemaGuard(TempCase):
-    def test_unknown_schema_rejected(self):
-        self.state.mkdir(parents=True)
-        bad = self.state / "wo-bad.json"
-        bad.write_text(json.dumps({"schema": 99, "plan_id": "wo-bad", "parts": []}))
-        with self.assertRaises(pt.WorkOrderError):
-            pt.load(str(self.state), "wo-bad")
-
-    def test_missing_work_order_rejected(self):
-        self.state.mkdir(parents=True)
-        with self.assertRaises(pt.WorkOrderError):
-            pt.load(str(self.state), "wo-nope")
-
-    def test_malformed_json_rejected(self):
-        self.state.mkdir(parents=True)
-        (self.state / "wo-bad.json").write_text("{not json")
-        with self.assertRaises(pt.WorkOrderError):
-            pt.load(str(self.state), "wo-bad")
-
-    def test_round_trip(self):
-        wo = pt.create("count the rows", source="direct", plan_doc=None,
-                       force=False, project="p", branch="b")
-        wo["parts"] = [{"part_id": "p1", "goal": "g", "status": "pending"}]
-        pt.save(str(self.state), wo)
-        back = pt.load(str(self.state), wo["plan_id"])
-        self.assertEqual(back["parts"][0]["goal"], "g")
-
-
 class TestAssign(TempCase):
-    def _wo(self, goals):
-        return {"schema": pt.SCHEMA, "plan_id": "wo-x", "task": "t",
-                "parts": [{"part_id": "p%d" % (i + 1), "goal": g, "status": "pending"}
+    def _plan(self, goals):
+        return {"schema": pt.SCHEMA, "task_id": "wo-x", "task": "t",
+                "steps": [{"id": "p%d" % (i + 1), "goal": g, "status": "pending"}
                           for i, g in enumerate(goals)]}
 
-    def test_each_part_routed_independently(self):
-        wo = self._wo(["author an Airflow DAG with a backfill",
-                       "run EXPLAIN ANALYZE on the slow query"])
-        pt.assign(wo, roles_dir=str(self.roles))
-        self.assertEqual(wo["parts"][0]["role"], "data-engineer")
-        self.assertEqual(wo["parts"][1]["role"], "dba")
+    def test_each_step_routed_independently(self):
+        plan = self._plan(["author an Airflow DAG with a backfill",
+                           "run EXPLAIN ANALYZE on the slow query"])
+        pt.assign(plan, roles_dir=self.roles_dir)
+        self.assertEqual(plan["steps"][0]["agent"], "data-engineer")
+        self.assertEqual(plan["steps"][1]["agent"], "dba")
 
-    def test_assign_sets_status_and_skills(self):
-        wo = self._wo(["author an Airflow DAG with a backfill"])
-        pt.assign(wo, roles_dir=str(self.roles))
-        p = wo["parts"][0]
-        self.assertEqual(p["status"], "assigned")
-        self.assertIn("airflow-dag-authoring", p["skills"])
-        self.assertGreater(p["role_score"], 0)
+    def test_assign_sets_skills_and_score(self):
+        plan = self._plan(["author an Airflow DAG with a backfill"])
+        pt.assign(plan, roles_dir=self.roles_dir)
+        step = plan["steps"][0]
+        self.assertIn("airflow-dag-authoring", step["skills"])
+        self.assertGreater(step["agent_score"], 0)
 
-    def test_unroutable_part_is_generalist_with_no_skills(self):
-        wo = self._wo(["zzz"])
-        pt.assign(wo, roles_dir=str(self.roles))
-        self.assertEqual(wo["parts"][0]["role"], "generalist")
-        self.assertEqual(wo["parts"][0]["skills"], [])
+    def test_unroutable_step_is_generalist_with_no_skills(self):
+        plan = self._plan(["zzz"])
+        pt.assign(plan, roles_dir=self.roles_dir)
+        self.assertEqual(plan["steps"][0]["agent"], "generalist")
+        self.assertEqual(plan["steps"][0]["skills"], [])
 
     def test_assign_is_idempotent(self):
-        wo = self._wo(["author an Airflow DAG with a backfill"])
-        pt.assign(wo, roles_dir=str(self.roles))
-        first = json.dumps(wo, sort_keys=True)
-        pt.assign(wo, roles_dir=str(self.roles))
-        self.assertEqual(first, json.dumps(wo, sort_keys=True))
+        plan = self._plan(["author an Airflow DAG with a backfill"])
+        pt.assign(plan, roles_dir=self.roles_dir)
+        first = json.dumps(plan, sort_keys=True)
+        pt.assign(plan, roles_dir=self.roles_dir)
+        self.assertEqual(first, json.dumps(plan, sort_keys=True))
 
-    def test_assign_does_not_reopen_a_done_part(self):
-        wo = self._wo(["author an Airflow DAG with a backfill"])
-        wo["parts"][0]["status"] = "done"
-        pt.assign(wo, roles_dir=str(self.roles))
-        self.assertEqual(wo["parts"][0]["status"], "done")
+    def test_assign_does_not_reopen_a_done_step(self):
+        plan = self._plan(["author an Airflow DAG with a backfill"])
+        plan["steps"][0]["status"] = "done"
+        pt.assign(plan, roles_dir=self.roles_dir)
+        self.assertEqual(plan["steps"][0]["status"], "done")
 
 
 class TestModelTier(unittest.TestCase):
@@ -263,43 +277,11 @@ class TestModelTier(unittest.TestCase):
         self.assertEqual(pt.model_for("write and count"), "opus")
 
 
-class TestLog(unittest.TestCase):
-    def _wo(self):
-        return {"schema": pt.SCHEMA, "plan_id": "wo-x", "task": "t",
-                "parts": [{"part_id": "p1", "goal": "g", "status": "assigned"}]}
-
-    def test_log_sets_done(self):
-        wo = self._wo()
-        pt.log_part(wo, "p1", {"ok": True, "summary": "did it"})
-        self.assertEqual(wo["parts"][0]["status"], "done")
-        self.assertEqual(wo["parts"][0]["log"]["summary"], "did it")
-
-    def test_log_ok_false_sets_failed(self):
-        wo = self._wo()
-        pt.log_part(wo, "p1", {"ok": False, "summary": "blocked"})
-        self.assertEqual(wo["parts"][0]["status"], "failed")
-
-    def test_log_missing_ok_is_failed_not_done(self):
-        # A log that does not assert success must never be read as success.
-        wo = self._wo()
-        pt.log_part(wo, "p1", {"summary": "ambiguous"})
-        self.assertEqual(wo["parts"][0]["status"], "failed")
-
-    def test_log_records_agent_task_id(self):
-        wo = self._wo()
-        pt.log_part(wo, "p1", {"ok": True, "agent_task_id": "agent-abc"})
-        self.assertEqual(wo["parts"][0]["agent_task_id"], "agent-abc")
-
-    def test_unknown_part_id_raises(self):
-        with self.assertRaises(KeyError):
-            pt.log_part(self._wo(), "nope", {"ok": True})
-
-
 class TestCli(TempCase):
     def _run(self, *args):
         return subprocess.run(
             [sys.executable, str(TOOLS / "plan_task.py"), "--state-dir",
-             str(self.state), "--roles-dir", str(self.roles)] + list(args),
+             str(self.state), "--roles-dir", self.roles_dir] + list(args),
             capture_output=True, text=True)
 
     def test_new_mechanical_task_succeeds(self):
@@ -307,24 +289,37 @@ class TestCli(TempCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("wo-", r.stdout)
 
-    def test_new_creative_task_exits_3(self):
+    def test_new_creative_task_no_longer_refused(self):
+        # what used to exit 3 with a superpowers refusal now just succeeds
         r = self._run("--new", "build a new dashboard")
-        self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
-        self.assertIn("superpowers:brainstorming", r.stderr)
-
-    def test_new_creative_task_with_force_succeeds(self):
-        r = self._run("--new", "build a new dashboard", "--force")
         self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_from_plan_creates_parts(self):
+    def test_new_creates_a_fully_briefed_plan_on_disk(self):
+        r = self._run("--new", "count the rows in the export")
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        plan = pt.load(str(self.state), pid)
+        step = plan["steps"][0]
+        self.assertEqual(step["status"], "pending")
+        self.assertTrue(step["brief"])
+        self.assertIsNotNone(step["agent"])
+
+    def test_force_flag_removed(self):
+        r = self._run("--new", "count the rows", "--force")
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_classify_flag_removed(self):
+        r = self._run("--classify", "build a new coach dashboard")
+        self.assertNotEqual(r.returncode, 0)
+
+    def test_from_plan_creates_steps(self):
         doc = pathlib.Path(self.tmp) / "plan.md"
         doc.write_text(PLAN_DOC)
         r = self._run("--from-plan", str(doc), "--task", "the whole thing")
         self.assertEqual(r.returncode, 0, r.stderr)
         pid = r.stdout.strip().splitlines()[0].split()[-1]
-        wo = pt.load(str(self.state), pid)
-        self.assertEqual(len(wo["parts"]), 2)
-        self.assertEqual(wo["source"], "plan")
+        plan = pt.load(str(self.state), pid)
+        self.assertEqual(len(plan["steps"]), 2)
+        self.assertEqual(plan["source"], "plan")
 
     def test_from_plan_with_no_headings_fails(self):
         doc = pathlib.Path(self.tmp) / "empty.md"
@@ -332,29 +327,24 @@ class TestCli(TempCase):
         r = self._run("--from-plan", str(doc), "--task", "t")
         self.assertNotEqual(r.returncode, 0)
 
-    def test_classify_reports_a_creative_prompt(self):
-        r = self._run("--classify", "build a new coach dashboard")
+    def test_reasoning_budget_and_worktree_flags_applied(self):
+        r = self._run("--new", "count the rows", "--reasoning", "low ambiguity",
+                      "--budget-tokens", "500", "--worktree")
         self.assertEqual(r.returncode, 0, r.stderr)
-        d = json.loads(r.stdout)
-        self.assertTrue(d["creative"])
-        self.assertGreaterEqual(d["score"], d["threshold"])
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        plan = pt.load(str(self.state), pid)
+        self.assertEqual(plan["supervisor_reasoning"], "low ambiguity")
+        self.assertEqual(plan["steps"][0]["budget_tokens"], 500)
+        self.assertTrue(plan["steps"][0]["worktree"])
 
-    def test_classify_reports_a_conversational_prompt(self):
-        d = json.loads(self._run("--classify", "what did that error mean").stdout)
-        self.assertFalse(d["creative"])
+    def test_assign_cli_reroutes_open_steps(self):
+        r = self._run("--new", "count the rows in the export")
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        r2 = self._run("--assign", pid)
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        self.assertIn(pid, r2.stdout)
 
-    def test_classify_writes_no_state(self):
-        # The gate hook calls this on every prompt; it must not create files.
-        before = sorted(p.name for p in pathlib.Path(self.tmp).rglob("*"))
-        self._run("--classify", "build a new coach dashboard")
-        self.assertEqual(before, sorted(p.name for p in pathlib.Path(self.tmp).rglob("*")))
-
-    def test_classify_handles_empty_text(self):
-        r = self._run("--classify", "")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertFalse(json.loads(r.stdout)["creative"])
-
-    def test_show_renders_the_work_order(self):
+    def test_show_renders_the_plan(self):
         r = self._run("--new", "count the rows in the export")
         pid = r.stdout.strip().splitlines()[0].split()[-1]
         r2 = self._run("--show", pid)
