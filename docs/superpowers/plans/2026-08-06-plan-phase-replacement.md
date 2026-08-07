@@ -652,7 +652,9 @@ RELAYS = {
         "--task \"<the request>\"\n"
         "Every step returned is already assigned and briefed — dispatch it "
         "directly. Then per step: plan_task.py --record <task_id> --step <id> "
-        "--json <file> to record each return, and score_task.py --auto "
+        "--json <file-or-json> to record each return (write the return to a "
+        "file and pass the path — a real return's prose carries quotes and "
+        "newlines that shell quoting mangles), and score_task.py --auto "
         "<task_id> at the end."
     ),
 }
@@ -979,7 +981,9 @@ DECOMPOSE  plan_task.py --new "<task>"                     one step, assigned + 
 +ASSIGN    plan_task.py --from-plan <doc> --task "<task>"  one step per plan task,
 +BRIEF                                                       assigned + briefed
 EXECUTE    dispatch the step's brief; agent returns JSON, not prose
-RECORD     plan_task.py --record <task_id> --step <id> --json <file>
+RECORD     plan_task.py --record <task_id> --step <id> --json <file-or-json>
+                                            (a file path is safer than inline
+                                             JSON — return prose has quotes)
 SCORE      score_task.py --auto <task_id>   (objective verdict, folds in what
                                               assess_task.py used to do)
 LEARN      heuristics_eval.py, reading that objective evidence
