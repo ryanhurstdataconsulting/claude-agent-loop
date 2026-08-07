@@ -36,7 +36,7 @@ trap 'rm -rf "$SANDBOX"' EXIT INT TERM
 
 # Each case gets a clean HOME with the tools copied to $HOME/.claude/tools.
 # Copy every sibling tool module, not a hand-picked subset: harvest_metrics.py
-# now imports obs_emit and assess_task (which itself imports plan_task, which
+# now imports obs_emit and score_task (which itself imports plan_task, which
 # imports route_role, which imports lint_roles) — a hardcoded two-file list
 # silently bit-rots every time such a same-directory import is added. This
 # mirrors the real installed layout, where every payload/tools/*.py lands in

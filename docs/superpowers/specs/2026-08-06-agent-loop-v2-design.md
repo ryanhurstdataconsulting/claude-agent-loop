@@ -2,6 +2,20 @@
 
 **Date:** 2026-08-06
 **Status:** Approved
+**Phase 1 code status (2026-08-07):** all 11 tasks in
+`docs/superpowers/plans/2026-08-06-plan-phase-replacement.md` are complete —
+code changes landed on branch `sdd/plan-phase-replacement` and passed review,
+full test suite green (51 suites, 0 failed). **This covers code only.** The
+real data migration (moving the 18 live work orders under
+`~/.claude/metrics/state/workorders/` to `~/.claude/plans/`) and the live
+deployment (merging this worktree into the framework repo's main line and
+installing it into `~/.claude`, which is still running the old schema-1
+`plan_task.py`) have **not** happened yet. That is a separate, deliberate
+next step, owned by the controller directly — deferred because other
+concurrent sessions across multiple projects still depend on the old
+pipeline, and migrating out from under them risks breaking a live session's
+write-back. Do not read "Phase 1 landed" as "Phase 1 is live" until that
+step is done.
 **Supersedes:** `docs/superpowers/specs/2026-07-30-workorder-pipeline-design.md` — Phase 1
 below replaces that spec's DECOMPOSE/ASSIGN/BRIEF/LOG/ASSESS pipeline entirely.
 Extends the `MATCH → ANNOUNCE → ROUTE → EXECUTE → SCORE → LEARN` loop in
