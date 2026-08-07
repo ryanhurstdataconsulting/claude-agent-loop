@@ -169,8 +169,11 @@ ASSIGN + BRIEF into one call:
   file with all steps pre-briefed (agent assignment via `route_role.route()`,
   model tier via the existing `model_for()` keyword arithmetic, and a fully
   rendered dispatch prompt per step — no separate `make_brief.py` call).
-- `--record <task_id> --step <id> --json <file>` — replaces `--log`; writes
-  the subagent's structured return onto `steps[i].return`.
+- `--record <task_id> --step <id> --json <file-or-json>` — replaces `--log`;
+  writes the subagent's structured return onto `steps[i].return`. `--json`
+  accepts either a path to a file holding the JSON or the JSON text itself; a
+  file is preferred for real dispatches, since a return's `summary`/`evidence`
+  prose carries quotes and newlines that shell quoting mangles.
 - `--show <task_id>` — unchanged in spirit.
 - `load()` / `save()` module functions are kept function-compatible in
   signature (still take a state dir + id, still read/write one JSON file) so
@@ -186,14 +189,25 @@ new `steps[]` schema instead of the old `parts[]` schema, iterates every step
 of that plan the same way `assess_task.py` iterated every part, and writes
 the per-step verdict back into that step's own `return` field in
 `plans/<task_id>.json` — preserving the original per-part granularity. It
-then emits one rolled-up `kind:"score"` metrics record for the task_id (the
-existing granularity `score_task.py` records at), mapping the *worst* verdict
-found across steps onto the existing SCALES.md `evidence` scale
-(`proven > partial > asserted` — a one-to-one fit for `clean`/(no strong
-signal)/`unknown`) plus `rework` when a revert or follow-up-fix commit is
-found on any step. The subjective `outcome` scale stays human/agent-declared,
-unchanged. `assess_task.py` is deleted; its algorithm moves into
-`score_task.py`.
+then emits one `kind:"score"` metrics record **per step**, each keyed by
+`score_task.step_task_id()` — the same key `loop_close.task_records()` gives
+that step's `kind:"task"` record (`agent_task_id`, else
+`<plan task_id>-<step id>`). Each record maps that step's own verdict onto the
+existing SCALES.md `evidence` scale (`proven > partial > asserted` — a
+one-to-one fit for `clean`/(no strong signal)/`unknown`) plus `rework` when
+that step shows a revert or a follow-up-fix commit. The worst verdict across
+the plan is printed as an operator summary but is not what gets stored.
+
+> **Corrected 2026-08-07, final whole-branch review.** This paragraph
+> originally specified ONE rolled-up record keyed on the plan's own `wo-*` id.
+> That record joined nothing: `heuristics_eval.py` reaches a score only by
+> looking up a `kind:"task"` record's own `task_id` in the score index, and no
+> task record has ever carried a plan id — so the SCORE→LEARN wiring was inert
+> for every `--auto` score. Per-step records keyed like the task records are
+> the join that actually closes the loop.
+
+The subjective `outcome` scale stays human/agent-declared, unchanged.
+`assess_task.py` is deleted; its algorithm moves into `score_task.py`.
 
 **Gate removed.** `~/.claude/hooks/workorder-gate.sh` (and its
 `payload/hooks/` source) is deleted, and its `UserPromptSubmit` entry is

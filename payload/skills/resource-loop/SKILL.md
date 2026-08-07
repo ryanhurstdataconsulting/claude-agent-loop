@@ -24,7 +24,9 @@ DECOMPOSE  plan_task.py --new "<task>"                     one step, assigned + 
 +ASSIGN    plan_task.py --from-plan <doc> --task "<task>"  one step per plan task,
 +BRIEF                                                       assigned + briefed
 EXECUTE    dispatch the step's brief; agent returns JSON, not prose
-RECORD     plan_task.py --record <task_id> --step <id> --json <payload>
+RECORD     plan_task.py --record <task_id> --step <id> --json <file-or-json>
+                                            (a file path is safer than inline
+                                             JSON — return prose has quotes)
 SCORE      score_task.py --auto <task_id>   (objective verdict, folds in what
                                               assess_task.py used to do)
 LEARN      heuristics_eval.py, reading that objective evidence
@@ -53,9 +55,11 @@ tool errors, commits, and reverts — never from anyone's opinion of the work. A
 step with no objective signal assesses `unknown`, never `clean`; silence is not
 success. There is no separate bespoke verdict field anymore: that internal
 verdict maps onto the SCALES.md evidence scale (`clean` → `proven`,
-`dirty`/`unknown` → `asserted`), and `--auto` appends one rolled-up
-`scales.evidence` record — worst step wins — plus `scales.rework` when any
-step needed a revert or a follow-up fix.
+`dirty`/`unknown` → `asserted`), and `--auto` appends one `scales.evidence`
+record **per step**, plus `scales.rework` on any step that needed a revert or
+a follow-up fix. Each record is keyed exactly like that step's own
+`kind:"task"` record, which is the only way LEARN can ever reach it; the worst
+verdict across the plan is printed for you, not stored.
 
 **Where an improvement lands.** A machine-global lesson patches the skill or
 role doc through `loop_autocommit.sh`, exactly as before. A project-specific
@@ -123,9 +127,9 @@ more than the measurement is worth.
    ```
    This loads the plan, fills every step's verdict from tests, tool errors,
    commits, and reverts — never from anyone's opinion of the work — and
-   appends one rolled-up `scales.evidence` (`proven`/`asserted`) record plus
-   `scales.rework` when a step needed a revert or a follow-up fix. Then record
-   a subjective self-score:
+   appends one `scales.evidence` (`proven`/`asserted`) record per step, plus
+   `scales.rework` on any step that needed a revert or a follow-up fix. Then
+   record a subjective self-score:
    ```
    python3 ~/.claude/tools/score_task.py --task-id <id> \
        --scale outcome=<level> [--scale ui=<level>] \

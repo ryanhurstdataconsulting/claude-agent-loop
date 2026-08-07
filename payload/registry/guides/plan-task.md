@@ -45,13 +45,26 @@ truth table.
 plan_task.py --new "<task>"                    # one step, assigned + briefed
 plan_task.py --from-plan <doc> --task "<task>" # one step per "### Task N:" heading
 plan_task.py --assign <task_id>                # re-route every open step
-plan_task.py --record <task_id> --step <id> --json <payload>
+plan_task.py --record <task_id> --step <id> --json <file-or-json>
 plan_task.py --show <task_id>
 ```
-Plans live at `~/.claude/plans/<YYYY-MM-DD>/<task_id>.json`. There is no
-creativity gate — every task decomposes, nothing is refused. Exit 0 on
-success, 2 on failure (bad args, unknown plan/step, malformed `--json`).
-Unlike the loop's hooks, this tool does **not** fail open.
+`--json` accepts **either** a path to a file holding the subagent's return
+JSON **or** the JSON text itself. Prefer the file: a real return's
+`summary`/`evidence` prose carries quotes, newlines, and backticks, which is
+exactly what a shell-quoted inline argument mangles.
+
+Plans live at `~/.claude/plans/<YYYY-MM-DD>/<task_id>.json`. That directory is
+**shared**, not this tool's alone: human-authored plan documents (the `.md`
+files `superpowers:writing-plans` produces) sit at the top level, while this
+tool's machine-generated plan artifacts live one level down, under a
+`<YYYY-MM-DD>/` subdirectory. Anything that sweeps or cleans the directory has
+to respect both — `loop_close.ready_plans()` globs `*/*.json` precisely so the
+top-level documents are never picked up as plans.
+
+There is no creativity gate — every task decomposes, nothing is refused. Exit 0
+on success, 2 on failure (bad args, unknown plan/step, a `--json` argument that
+is neither a readable file nor valid JSON). Unlike the loop's hooks, this tool
+does **not** fail open.
 
 ## Composition (pairs with / hands off to)
 - Creative work is still worth designing before it's decomposed — run
