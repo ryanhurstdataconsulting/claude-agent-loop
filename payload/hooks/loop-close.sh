@@ -44,14 +44,14 @@ CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 TOOLS_DIR="${TOOLS_DIR:-$CLAUDE_DIR/tools}"
 METRICS_DIR="${METRICS_DIR:-$CLAUDE_DIR/metrics}"
 PROJECTS_DIR="${PROJECTS_DIR:-$CLAUDE_DIR/projects}"
-STATE_DIR="${STATE_DIR:-$METRICS_DIR/state/workorders}"
+BASE_DIR="${BASE_DIR:-$CLAUDE_DIR/plans}"
 INPUT="$(cat 2>/dev/null || true)"
 
 HOOK_JSON="$INPUT" \
 TOOLS_DIR="$TOOLS_DIR" \
 METRICS_DIR="$METRICS_DIR" \
 PROJECTS_DIR="$PROJECTS_DIR" \
-STATE_DIR="$STATE_DIR" \
+BASE_DIR="$BASE_DIR" \
 python3 >/dev/null 2>&1 <<'PY' || true
 import json
 import os
@@ -80,18 +80,18 @@ except Exception:
 session_id = data.get("session_id") or "unknown"
 
 metrics = os.environ.get("METRICS_DIR", "")
-state = os.environ.get("STATE_DIR", "")
+base = os.environ.get("BASE_DIR", "")
 projects = os.environ.get("PROJECTS_DIR", "")
 
-# --- 1. close every ready work order -----------------------------------------
+# --- 1. close every ready plan ------------------------------------------------
 summaries = []
 try:
     import loop_close
-    for wo in loop_close.ready_work_orders(state):
+    for wo in loop_close.ready_plans(base):
         try:
             s = loop_close.close_one(wo, metrics, projects)
             import plan_task
-            plan_task.save(state, wo)
+            plan_task.save(base, wo)
             summaries.append({k: v for k, v in s.items() if k != "records"})
         except Exception:
             continue
