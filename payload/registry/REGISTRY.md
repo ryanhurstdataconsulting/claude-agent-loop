@@ -35,9 +35,7 @@
 | lint-registry | tool | Validate registry index ↔ guides after any registry edit |
 | lint-roles | tool | Validate role-agent files after any agents/roles edit — frontmatter shape, skill existence, MCP bijection |
 | route-role | tool | The deterministic task → role hop at MATCH — prints the Role — line with the role's skills and MCPs |
-| plan-task | tool | DECOMPOSE/ASSIGN/LOG — build the work order, route each PART independently, record each subagent's structured return; refuses a creative task until brainstorming + writing-plans have run |
-| make-brief | tool | BRIEF — render the dispatchable subagent prompt for one part, carrying its ids, skill shortlist, and required return schema |
-| assess-task | tool | ASSESS — objective clean/dirty/unknown verdict per part from tests, tool errors, commits, and reverts; no model judgment |
+| plan-task | tool | DECOMPOSE/ASSIGN/BRIEF/RECORD — build a plan, route and brief each step, record each subagent's structured return |
 | loop-contribute | tool | The feedback loop — gate-cleared (GENERIC-only) local resources auto-push to a contrib/* branch with an impact summary; --nudge at SessionStart |
 | run-canaries | tool | Full-coverage probe: does each project's session announce the loop? |
 | check-coverage | tool | Static check: CLAUDE.md stub + SUBAGENTS.md present across your projects |

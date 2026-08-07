@@ -10,33 +10,36 @@ registry index is injected at session start inside `<resource-loop>` tags. If it
 is absent (hook failure, subagent context), read
 `~/.claude/registry/REGISTRY.md` directly.
 
-## The work-order pipeline — use this for any task with parts
+## The plan pipeline — use this for any task with parts
 
-A task big enough to have parts runs on a **work order**: one JSON file at
-`~/.claude/metrics/state/workorders/<plan-id>.json` that every stage reads and
+A task big enough to have parts runs on a **plan**: one JSON file at
+`~/.claude/plans/<YYYY-MM-DD>/<task_id>.json` that every stage reads and
 writes. It exists because the ANNOUNCE line below is prose a harvester has to
 scrape back out of a transcript, and measured over two months that scrape
-succeeded on 21.7% of subagent tasks. A work order is written by a tool, so
+succeeded on 21.7% of subagent tasks. A plan is written by a tool, so
 attribution is precise by construction.
 
 ```
-DECOMPOSE  plan_task.py --new "<task>"                     one part
-           plan_task.py --from-plan <doc> --task "<task>"  one part per plan task
-ASSIGN     plan_task.py --assign <plan-id>                 route_role per PART
-BRIEF      make_brief.py <plan-id> <part-id>               the dispatch prompt
-EXECUTE    dispatch; agent returns JSON, not prose
-LOG        plan_task.py --log <plan-id> --part <id> --json <file>
-ASSESS     assess_task.py <plan-id> [--repo .] [--propose-row]
-LEARN      heuristics_eval.py, now reading objective evidence
+DECOMPOSE  plan_task.py --new "<task>"                     one step, assigned + briefed
++ASSIGN    plan_task.py --from-plan <doc> --task "<task>"  one step per plan task,
++BRIEF                                                       assigned + briefed
+EXECUTE    dispatch the step's brief; agent returns JSON, not prose
+RECORD     plan_task.py --record <task_id> --step <id> --json <payload>
+SCORE      score_task.py --auto <task_id>   (objective verdict, folds in what
+                                              assess_task.py used to do)
+LEARN      heuristics_eval.py, reading that objective evidence
 ```
 
-**You do not have to remember this.** `workorder-gate.sh` runs on
-`UserPromptSubmit` and scores every prompt. A conversational prompt or a slash
-command passes in silence; a prompt at or above the creativity threshold injects
-the decomposition directive before you answer, at most once per hour per session
-so a long build is not nagged every turn. The gate is keyword arithmetic and can
-misjudge — when it does, say so in one sentence and carry on. Kill switch:
-`WORKORDER_GATE_DISABLE=1`.
+**PLAN is judgment, not a gate.** Decide for yourself whether a task is big
+enough for a plan artifact — multi-step, multi-agent, or ambiguous work is; a
+one-line fix or a question is not. There is no keyword-scored backstop forcing
+this anymore. `pipeline-relay.sh` still nudges the next link once you've
+launched `superpowers:brainstorming` or `superpowers:writing-plans`, so a
+session that settles a design doesn't stop at the spec. Creative work is still
+worth designing before it's decomposed — that used to be a hard refusal
+`plan_task.py --new` enforced with exit 3; now it is guidance, not a rule any
+tool checks, so make the call yourself and run brainstorming/writing-plans
+first when the task warrants it.
 
 `pipeline-relay.sh` then keeps the chain moving: launching
 `superpowers:brainstorming` or `superpowers:writing-plans` injects the next
@@ -44,27 +47,24 @@ link. It exists because a spec is where the chain kept dying — a session would
 settle the design, write a spec, and start implementing from it. **A spec is a
 design, not a decomposition.** Kill switch: `PIPELINE_RELAY_DISABLE=1`.
 
-**The superpowers gate.** `--new` REFUSES a creative task with exit 3. That is
-deliberate: a task worth building is worth designing first. Run
-`Skill(superpowers:brainstorming)` to settle the design, then
-`Skill(superpowers:writing-plans)` to produce the breakdown, then feed that plan
-document to `--from-plan`. `--force` overrides the refusal but records
-`"forced": true` on the work order, so the shortcut shows up in the data.
-
-**What ASSESS decides, and what it does not.** The verdict is `clean`, `dirty`,
-or `unknown`, computed from tests, tool errors, commits, and reverts — never
-from anyone's opinion of the work. A part with no objective signal assesses
-`unknown`, never `clean`; silence is not success. `score_task.py` is retained
-but demoted to a tiebreaker.
+**What SCORE's `--auto` mode decides, and what it does not.** Internally it
+still computes a `clean`, `dirty`, or `unknown` verdict per step, from tests,
+tool errors, commits, and reverts — never from anyone's opinion of the work. A
+step with no objective signal assesses `unknown`, never `clean`; silence is not
+success. There is no separate bespoke verdict field anymore: that internal
+verdict maps onto the SCALES.md evidence scale (`clean` → `proven`,
+`dirty`/`unknown` → `asserted`), and `--auto` appends one rolled-up
+`scales.evidence` record — worst step wins — plus `scales.rework` when any
+step needed a revert or a follow-up fix.
 
 **Where an improvement lands.** A machine-global lesson patches the skill or
 role doc through `loop_autocommit.sh`, exactly as before. A project-specific
-lesson belongs in that project's `.claude/SUBAGENTS.md` instead —
-`assess_task.py --propose-row` prints the row, and you ASK before writing it.
-That path never writes inside a client project on its own.
+lesson belongs in that project's `.claude/SUBAGENTS.md` instead — propose the
+row yourself and ASK before writing it; no tool auto-drafts it. That path
+never writes inside a client project on its own.
 
-Skip the work order for a trivial single-step task: measuring a one-line fix
-costs more than the measurement is worth.
+Skip the plan for a trivial single-step task: measuring a one-line fix costs
+more than the measurement is worth.
 
 ## The six steps
 
@@ -115,8 +115,17 @@ costs more than the measurement is worth.
    paste the ANNOUNCE contract (exact registry ids, comma-separated), the
    relevant guide pointers, the ROUTE table, and the SCORE duty below. A
    subagent that does not announce and score is a task the loop cannot see.
-5. **SCORE** — at task close, after the objective evidence is in, record a
-   subjective self-score:
+5. **SCORE** — at task close, first fill in the objective half, then the
+   subjective one. For a task run through `plan_task.py` (a plan with steps),
+   assess it objectively before self-scoring:
+   ```
+   python3 ~/.claude/tools/score_task.py --auto <task_id>
+   ```
+   This loads the plan, fills every step's verdict from tests, tool errors,
+   commits, and reverts — never from anyone's opinion of the work — and
+   appends one rolled-up `scales.evidence` (`proven`/`asserted`) record plus
+   `scales.rework` when a step needed a revert or a follow-up fix. Then record
+   a subjective self-score:
    ```
    python3 ~/.claude/tools/score_task.py --task-id <id> \
        --scale outcome=<level> [--scale ui=<level>] \

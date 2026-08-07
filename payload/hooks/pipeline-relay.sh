@@ -2,11 +2,13 @@
 # pipeline-relay.sh — PostToolUse (matcher: Skill): keep the design chain from
 # terminating early.
 #
-# The UserPromptSubmit gate (workorder-gate.sh) gets a creative prompt as far as
-# brainstorming. Measured on real sessions, that is where the chain broke: a
-# session ran brainstorming, wrote a design spec, and then began implementing
-# from the spec alone — never reaching writing-plans, and so never reaching a
-# work order. A spec is a design, not a decomposition.
+# A UserPromptSubmit gate used to score every prompt and get a creative one
+# as far as brainstorming; it has since been removed (no keyword-scored PLAN
+# backstop replaces it — see SKILL.md's "PLAN is judgment, not a gate").
+# Measured on real sessions while that gate still ran, that is where the
+# chain broke: a session ran brainstorming, wrote a design spec, and then
+# began implementing from the spec alone — never reaching writing-plans, and
+# so never reaching a plan. A spec is a design, not a decomposition.
 #
 # This hook fires when either superpowers skill is LAUNCHED and injects the next
 # link:

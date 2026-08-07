@@ -1,6 +1,11 @@
 #!/bin/bash
-# test_obs_events_gates.sh — gate.decision emission from workorder-gate.sh
-# and read-guard.sh. macOS bash-3.2 portable.
+# test_obs_events_gates.sh — gate.decision emission from read-guard.sh.
+# macOS bash-3.2 portable.
+#
+# Formerly also covered a UserPromptSubmit gate's silent/inject paths; that
+# hook's script has since been deleted (no keyword-scored PLAN backstop
+# replaces it — see SKILL.md's "PLAN is judgment, not a gate"), so those two
+# cases were removed along with it.
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -33,28 +38,6 @@ assert_one_record() {
   count="$(echo "$1" | grep -c "\"session_id\":\"$2\"")"
   [ "$count" -eq 1 ] && pass "$3 (exactly one record)" || die "$3 wrong record count: $count (got: $1)"
 }
-
-# assert_score_present <recs> <session_id> <label> — the record for this
-# session must carry a non-null numeric score, not the bare bail() default.
-assert_score_present() {
-  line="$(echo "$1" | grep "\"session_id\":\"$2\"")"
-  echo "$line" | grep -qE '"score":[0-9]' && pass "$3" || die "$3 missing/null score (got: $line)"
-}
-
-# --- workorder-gate.sh: silent path -> gate.decision action:silent ----------
-payload="$(python3 -c "import json; print(json.dumps({'session_id':'g1','prompt':'what does this error mean'}))")"
-printf '%s' "$payload" | env CLAUDE_DIR="$TMP/claude" TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/claude/metrics" bash "$HOOKS_DIR/workorder-gate.sh" >/dev/null
-recs="$(last_records)"
-assert_gate_action "$recs" "workorder" "silent" "workorder silent path recorded"
-assert_one_record "$recs" "g1" "workorder silent path"
-assert_score_present "$recs" "g1" "workorder silent path: score not discarded"
-
-# --- workorder-gate.sh: inject path -> gate.decision action:inject with score
-payload="$(python3 -c "import json; print(json.dumps({'session_id':'g2','prompt':'build a brand new coach dashboard with rankings and drilldowns'}))")"
-printf '%s' "$payload" | env CLAUDE_DIR="$TMP/claude" TOOLS_DIR="$TOOLS" METRICS_DIR="$TMP/claude/metrics" bash "$HOOKS_DIR/workorder-gate.sh" >/dev/null
-recs="$(last_records)"
-assert_gate_action "$recs" "workorder" "inject" "workorder inject path recorded"
-assert_one_record "$recs" "g2" "workorder inject path"
 
 # --- read-guard.sh: silent allow -> gate.decision action:silent -------------
 payload="$(python3 -c "import json; print(json.dumps({'session_id':'g3','tool_input':{'file_path':'/tmp/small.txt'}}))")"

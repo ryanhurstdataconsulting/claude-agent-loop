@@ -248,9 +248,11 @@ def _coarse_count(records):
 
 
 #: Sources whose resources_deployed is trustworthy per task. ``task`` is the
-#: transcript's own announce line; ``workorder`` is written by plan_task.py at
-#: assignment time and is if anything stronger, since a tool wrote it rather
-#: than a regex recovering it from prose. ``session-backfill`` is neither.
+#: transcript's own announce line; ``workorder`` is written by
+#: loop_close.py's task_records() when a plan closes — one record per step,
+#: using the step's assigned agent/skills — and is if anything stronger,
+#: since a tool wrote it rather than a regex recovering it from prose.
+#: ``session-backfill`` is neither.
 PRECISE_SOURCES = ("task", "workorder")
 
 
