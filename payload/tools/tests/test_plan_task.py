@@ -277,6 +277,38 @@ class TestModelTier(unittest.TestCase):
         self.assertEqual(pt.model_for("write and count"), "opus")
 
 
+class TestRecordReturn(TempCase):
+    def _plan_with_one_step(self):
+        return {"schema": pt.SCHEMA, "task_id": "wo-x", "task": "t",
+                "steps": [{"id": "S1", "goal": "g", "status": "pending", "return": None, "agent_task_id": None}]}
+
+    def test_record_sets_done_on_ok_true(self):
+        plan = self._plan_with_one_step()
+        pt.record_return(plan, "S1", {"ok": True, "summary": "did it"})
+        self.assertEqual(plan["steps"][0]["status"], "done")
+        self.assertEqual(plan["steps"][0]["return"]["summary"], "did it")
+
+    def test_missing_ok_is_failed_not_done(self):
+        plan = self._plan_with_one_step()
+        pt.record_return(plan, "S1", {"summary": "ambiguous"})
+        self.assertEqual(plan["steps"][0]["status"], "failed")
+
+    def test_ok_false_sets_failed(self):
+        plan = self._plan_with_one_step()
+        pt.record_return(plan, "S1", {"ok": False, "summary": "nope"})
+        self.assertEqual(plan["steps"][0]["status"], "failed")
+
+    def test_agent_task_id_captured(self):
+        plan = self._plan_with_one_step()
+        pt.record_return(plan, "S1", {"ok": True, "agent_task_id": "agent-abc"})
+        self.assertEqual(plan["steps"][0]["agent_task_id"], "agent-abc")
+
+    def test_unknown_step_raises(self):
+        plan = self._plan_with_one_step()
+        with self.assertRaises(KeyError):
+            pt.record_return(plan, "S99", {"ok": True})
+
+
 class TestCli(TempCase):
     def _run(self, *args):
         return subprocess.run(
@@ -350,6 +382,25 @@ class TestCli(TempCase):
         r2 = self._run("--show", pid)
         self.assertEqual(r2.returncode, 0, r2.stderr)
         self.assertIn(pid, r2.stdout)
+
+    def test_cli_record_requires_step_and_json(self):
+        # Create a plan first
+        r = self._run("--new", "count the rows")
+        pid = r.stdout.strip().splitlines()[0].split()[-1]
+        plan = pt.load(str(self.state), pid)
+        step_id = plan["steps"][0]["id"]
+
+        # `--record <id>` with neither --step nor --json should exit 2
+        r2 = self._run("--record", pid)
+        self.assertNotEqual(r2.returncode, 0)
+
+        # `--record <id> --step <id>` without --json should exit 2
+        r3 = self._run("--record", pid, "--step", step_id)
+        self.assertNotEqual(r3.returncode, 0)
+
+        # `--record <id> --json <json>` without --step should exit 2
+        r4 = self._run("--record", pid, "--json", '{"ok": true}')
+        self.assertNotEqual(r4.returncode, 0)
 
 
 if __name__ == "__main__":

@@ -304,6 +304,44 @@ def assign(plan, roles_dir):
     return plan
 
 
+# --- RECORD ------------------------------------------------------------------
+def record_return(plan, step_id, payload):
+    """Record a step's return value and update its status.
+
+    If the payload contains ``ok: true``, status becomes ``done``.
+    If the payload contains ``ok: false`` or omits ``ok`` entirely, status becomes ``failed``.
+
+    The payload is stored in ``step["return"]``. If the payload contains
+    ``agent_task_id``, it is extracted and stored in ``step["agent_task_id"]``.
+
+    Raises KeyError if the step is not found.
+    """
+    # Find the step by id
+    step = None
+    for s in plan.get("steps", []):
+        if s.get("id") == step_id:
+            step = s
+            break
+
+    if step is None:
+        raise KeyError("step %r not found in plan %r" % (step_id, plan.get("task_id")))
+
+    # Record the return payload
+    step["return"] = payload
+
+    # Extract and record agent_task_id if present
+    if "agent_task_id" in payload:
+        step["agent_task_id"] = payload["agent_task_id"]
+
+    # Set status based on ok field
+    if payload.get("ok") is True:
+        step["status"] = "done"
+    else:
+        step["status"] = "failed"
+
+    return step
+
+
 # --- persistence -------------------------------------------------------------
 def _path(base_dir, task_id):
     m = TASK_ID_DATE.match(task_id or "")
@@ -361,6 +399,7 @@ def _build_parser():
     m.add_argument("--from-plan", metavar="DOC", help="create one step per '### Task N:' heading")
     m.add_argument("--assign", metavar="TASK_ID", help="re-route every open step")
     m.add_argument("--show", metavar="TASK_ID", help="print a plan")
+    m.add_argument("--record", metavar="TASK_ID", help="record a step's return value")
     p.add_argument("--task", help="the task text (required with --from-plan)")
     p.add_argument("--reasoning", default="",
                    help="supervisor's routing rationale, recorded verbatim on the plan")
@@ -368,6 +407,8 @@ def _build_parser():
                    help="token budget applied to every step created by this call")
     p.add_argument("--worktree", action="store_true",
                    help="mark every step created by this call as needing an isolated worktree")
+    p.add_argument("--step", metavar="STEP_ID", help="step id (required with --record)")
+    p.add_argument("--json", metavar="PAYLOAD", help="return payload as JSON (required with --record)")
     p.add_argument("--state-dir", default=_default_state_dir())
     p.add_argument("--roles-dir", default=str(home / "agents" / "roles"))
     return p
@@ -418,6 +459,20 @@ def main(argv=None):
             return 0
         if a.show:
             print(json.dumps(load(state, a.show), indent=1, sort_keys=True))
+            return 0
+        if a.record:
+            if not a.step or not a.json:
+                sys.stderr.write("--record requires both --step and --json\n")
+                return 2
+            try:
+                payload = json.loads(a.json)
+            except json.JSONDecodeError as exc:
+                sys.stderr.write("--json is not valid JSON: %s\n" % exc)
+                return 2
+            plan = load(state, a.record)
+            record_return(plan, a.step, payload)
+            save(state, plan)
+            print("recorded return for step %s in %s" % (a.step, plan["task_id"]))
             return 0
     except (WorkOrderError, KeyError) as exc:
         sys.stderr.write("%s\n" % exc)
