@@ -34,6 +34,14 @@ def ev(**over):
     return base
 
 
+def _step(verdict=None, reverts=0, followup_fixes=0):
+    """A minimal already-assessed step, for exercising the pure rollup
+    functions (_worst_verdict, _rework_flag) directly against plain dicts."""
+    return {"assessment": {"verdict": verdict,
+                           "evidence": {"reverts": reverts,
+                                        "followup_fixes": followup_fixes}}}
+
+
 def _records(shard):
     return [json.loads(ln) for ln in shard.read_text().splitlines() if ln.strip()]
 
@@ -478,6 +486,63 @@ class TestEvidenceScaleMapping(unittest.TestCase):
         self.assertEqual(st.evidence_scale_for("unknown"), "asserted")
 
 
+class TestWorstVerdict(unittest.TestCase):
+    """Direct unit tests of the pure rollup function — no git repo, no
+    subprocess, no tempdir needed; _worst_verdict() only reads
+    step["assessment"]["verdict"] off a plain dict."""
+
+    def test_all_clean_rolls_up_clean(self):
+        plan = {"steps": [_step("clean"), _step("clean")]}
+        self.assertEqual(st._worst_verdict(plan), "clean")
+
+    def test_one_dirty_among_clean_rolls_up_dirty(self):
+        plan = {"steps": [_step("clean"), _step("dirty"), _step("clean")]}
+        self.assertEqual(st._worst_verdict(plan), "dirty")
+
+    def test_dirty_beats_unknown(self):
+        plan = {"steps": [_step("unknown"), _step("dirty")]}
+        self.assertEqual(st._worst_verdict(plan), "dirty")
+
+    def test_unknown_beats_clean_alone(self):
+        # _VERDICT_RANK = {"clean": 0, "unknown": 1, "dirty": 2}: unknown
+        # outranks clean, so one unmeasured step drags a clean step down to
+        # unknown rather than being masked by it.
+        plan = {"steps": [_step("clean"), _step("unknown")]}
+        self.assertEqual(st._worst_verdict(plan), "unknown")
+
+    def test_no_assessed_steps_rolls_up_unknown(self):
+        self.assertEqual(st._worst_verdict({"steps": []}), "unknown")
+
+
+class TestReworkFlag(unittest.TestCase):
+    """Direct unit tests of the pure rollup function — _rework_flag() only
+    reads step["assessment"]["evidence"]["reverts"/"followup_fixes"]."""
+
+    def test_followup_fix_alone_is_minor(self):
+        plan = {"steps": [_step("dirty", followup_fixes=1)]}
+        self.assertEqual(st._rework_flag(plan), "minor")
+
+    def test_revert_alone_is_major(self):
+        plan = {"steps": [_step("dirty", reverts=1)]}
+        self.assertEqual(st._rework_flag(plan), "major")
+
+    def test_revert_and_followup_fix_both_present_major_wins(self):
+        # the precedence the code review specifically flagged as untested:
+        # a single step (or two separate steps) showing both signals must
+        # roll up to "major", not "minor".
+        plan = {"steps": [_step("dirty", reverts=1, followup_fixes=1)]}
+        self.assertEqual(st._rework_flag(plan), "major")
+
+    def test_revert_on_one_step_and_followup_fix_on_another_major_wins(self):
+        plan = {"steps": [_step("dirty", followup_fixes=1),
+                          _step("dirty", reverts=1)]}
+        self.assertEqual(st._rework_flag(plan), "major")
+
+    def test_no_rework_signal_is_none(self):
+        plan = {"steps": [_step("clean")]}
+        self.assertIsNone(st._rework_flag(plan))
+
+
 class TestAutoCLI(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -572,6 +637,36 @@ class TestAutoCLI(unittest.TestCase):
                   and rec["task_id"] == "session-" + task_id]
         self.assertEqual(len(scores), 1)
         self.assertEqual(scores[0]["scales"]["rework"], "minor")
+        self.assertEqual(scores[0]["scales"]["evidence"], "asserted")
+
+    def test_auto_rolls_up_worst_verdict_across_multiple_steps(self):
+        # End-to-end companion to TestWorstVerdict: a two-step plan where one
+        # step assesses clean and the other assesses dirty (a failed status
+        # forces dirty regardless of evidence) must roll up to the dirty
+        # step's evidence scale, not the clean one's.
+        task_id = "wo-20260701-multistep-abcdef"
+        self._plant_task_metric("agent-clean")
+        self._save_plan(task_id, [
+            {"id": "p1", "goal": "g1", "agent": "dba", "skills": [],
+             "status": "done", "agent_task_id": "agent-clean",
+             "return": {"ok": True, "files_touched": []}, "assessment": None},
+            {"id": "p2", "goal": "g2", "agent": "dba", "skills": [],
+             "status": "failed", "agent_task_id": None,
+             "return": {"ok": False}, "assessment": None},
+        ])
+
+        r = self._run("--auto", task_id, "--state-dir", str(self.state),
+                      "--metrics-dir", str(self.metrics))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        plan = pt.load(str(self.state), task_id)
+        self.assertEqual(plan["steps"][0]["assessment"]["verdict"], "clean")
+        self.assertEqual(plan["steps"][1]["assessment"]["verdict"], "dirty")
+
+        scores = [rec for rec in self._newest_shard_records()
+                  if rec["kind"] == "score"
+                  and rec["task_id"] == "session-" + task_id]
+        self.assertEqual(len(scores), 1)
         self.assertEqual(scores[0]["scales"]["evidence"], "asserted")
 
 
