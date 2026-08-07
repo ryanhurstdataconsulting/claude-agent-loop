@@ -234,6 +234,7 @@ link-file tools/loop_close.py
 link-file tools/obs_emit.py
 link-file tools/metrics_to_otlp.py
 link-file tools/plan_task.py
+link-file tools/migrate_workorders_to_plans.py
 link-file tools/loop_autocommit.sh
 link-file tools/loop_contribute.py
 link-file tools/loop_digest.py

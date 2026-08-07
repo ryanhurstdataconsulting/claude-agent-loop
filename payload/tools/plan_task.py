@@ -343,14 +343,22 @@ def record_return(plan, step_id, payload):
 
 
 # --- persistence -------------------------------------------------------------
-def _path(base_dir, task_id):
+def date_partition_for(task_id):
+    """Extract the ``YYYY-MM-DD`` partition embedded in a ``wo-YYYYMMDD-`` id.
+
+    Shared by ``_path()`` and the schema-1 -> schema-2 migration tool so the
+    date-parsing regex lives in exactly one place.
+    """
     m = TASK_ID_DATE.match(task_id or "")
     if not m:
         raise WorkOrderError(
             "task_id %r does not carry an embedded wo-YYYYMMDD- date" % task_id)
     d = m.group(1)
-    day = "%s-%s-%s" % (d[0:4], d[4:6], d[6:8])
-    return pathlib.Path(base_dir) / day / (task_id + ".json")
+    return "%s-%s-%s" % (d[0:4], d[4:6], d[6:8])
+
+
+def _path(base_dir, task_id):
+    return pathlib.Path(base_dir) / date_partition_for(task_id) / (task_id + ".json")
 
 
 def save(base_dir, plan):
