@@ -34,6 +34,15 @@ class _FixtureMixin:
     def _minimal_old_wo(self, part_status="pending"):
         return self._minimal_old_wo_dict(part_status=part_status)
 
+    def _old_wo_with_evidence_verdict(self, evidence, verdict):
+        """A minimal old work order with independently-set evidence/verdict,
+        to exercise all four assessment permutations (both present, either
+        one missing, both missing)."""
+        old = self._minimal_old_wo_dict(part_status="done")
+        old["parts"][0]["evidence"] = evidence
+        old["parts"][0]["verdict"] = verdict
+        return old
+
 
 class TestMigrateOne(_FixtureMixin, unittest.TestCase):
     def test_maps_every_field(self):
@@ -59,6 +68,7 @@ class TestMigrateOne(_FixtureMixin, unittest.TestCase):
         self.assertEqual(new["git_branch"], "main")
         step = new["steps"][0]
         self.assertEqual(step["id"], "p1")
+        self.assertEqual(step["goal"], "the goal")
         self.assertEqual(step["agent"], "generalist")
         self.assertEqual(step["agent_score"], 0)
         self.assertEqual(step["skills"], [])
@@ -83,8 +93,32 @@ class TestMigrateOne(_FixtureMixin, unittest.TestCase):
         new = mig.migrate_one(old)
         self.assertEqual(new["steps"][0]["brief"], "")
 
-    def test_missing_evidence_or_verdict_yields_none_assessment(self):
-        old = self._minimal_old_wo(part_status="pending")
+    # -- assessment: all four evidence/verdict presence permutations --------
+    # (test_maps_every_field above already covers "both present" with a
+    # realistic payload; this one confirms it in isolation too so the four
+    # cases read as one deliberate set.)
+    def test_both_evidence_and_verdict_present_yields_real_assessment(self):
+        old = self._old_wo_with_evidence_verdict({"tests_detected": False}, "clean")
+        new = mig.migrate_one(old)
+        self.assertEqual(new["steps"][0]["assessment"],
+                          {"evidence": {"tests_detected": False}, "verdict": "clean"})
+
+    def test_evidence_present_verdict_none_yields_none_assessment(self):
+        # The partial-missing case: if the AND in the implementation ever
+        # regressed to an OR, this would start returning a real assessment
+        # dict with verdict=None instead of None.
+        old = self._old_wo_with_evidence_verdict({"tests_detected": False}, None)
+        new = mig.migrate_one(old)
+        self.assertIsNone(new["steps"][0]["assessment"])
+
+    def test_verdict_present_evidence_none_yields_none_assessment(self):
+        # The other partial-missing case, same regression risk as above.
+        old = self._old_wo_with_evidence_verdict(None, "clean")
+        new = mig.migrate_one(old)
+        self.assertIsNone(new["steps"][0]["assessment"])
+
+    def test_both_evidence_and_verdict_none_yields_none_assessment(self):
+        old = self._old_wo_with_evidence_verdict(None, None)
         new = mig.migrate_one(old)
         self.assertIsNone(new["steps"][0]["assessment"])
 
