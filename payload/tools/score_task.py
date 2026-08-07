@@ -48,10 +48,6 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import harvest_metrics as hm  # noqa: E402
-import distill_transcripts as dt  # noqa: E402
-import lint_scales as ls  # noqa: E402
-import plan_task as pt  # noqa: E402
 
 SCHEMA = 1
 EXTENDED_HEADER = "## Extended (learned on this machine)"
@@ -60,7 +56,17 @@ EXTENDED_HEADER = "## Extended (learned on this machine)"
 # assess_task.py so loop_close.py can call one tool for both the subjective
 # self-score and the objective evidence) -------------------------------------
 # The same ceiling H1 already uses for a resource's mean tool-error rate.
+# MUST be defined before importing harvest_metrics (which imports it) to avoid
+# circular import: score_task.py imports harvest_metrics at line 51; if
+# harvest_metrics then tries to import ERROR_RATE_MAX before line 63, the
+# module is not yet fully initialized.
 ERROR_RATE_MAX = 0.25
+
+import harvest_metrics as hm  # noqa: E402
+import distill_transcripts as dt  # noqa: E402
+import lint_scales as ls  # noqa: E402
+import plan_task as pt  # noqa: E402
+
 FOLLOWUP_HOURS = 24
 # clean/dirty/unknown -> the SCALES.md evidence scale. "partial" is never
 # emitted by this mapping (a signal either fully backs the claim or it
