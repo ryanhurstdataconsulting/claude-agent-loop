@@ -214,7 +214,6 @@ link-file hooks/loop-close.sh
 link-file hooks/obs-events.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
-link-file tools/assess_task.py
 link-file tools/audit_digest.py
 link-file tools/audit_dispatch.py
 link-file tools/audit_run.sh
@@ -234,7 +233,6 @@ link-file tools/lint_roles.py
 link-file tools/lint_scales.py
 link-file tools/loop_close.py
 link-file tools/obs_emit.py
-link-file tools/make_brief.py
 link-file tools/metrics_to_otlp.py
 link-file tools/plan_task.py
 link-file tools/loop_autocommit.sh

@@ -57,8 +57,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import distill_transcripts as dt  # noqa: E402
 import obs_emit  # noqa: E402 - stdlib-only itself, so this doesn't violate
                   # this file's "stdlib only" docstring claim
-from assess_task import ERROR_RATE_MAX  # noqa: E402 - source of truth for the
-                  # error-rate ceiling; see assess_task.py's own comment
+from score_task import ERROR_RATE_MAX  # noqa: E402 - source of truth for the
+                  # error-rate ceiling; see score_task.py's own comment
 
 SCHEMA = 1
 
@@ -428,7 +428,7 @@ def build_run_record(agg, sid):
     (agg["interrupted"] > 0) — this is real, already-computed signal
     build_record() itself uses, unlike loop_close.py's subagent runs, which
     have no such signal at the part level. Otherwise "success" unless
-    error_rate exceeds ERROR_RATE_MAX (imported from assess_task, the source
+    error_rate exceeds ERROR_RATE_MAX (imported from score_task, the source
     of truth for this ceiling).
     """
     interrupted = (agg.get("interrupted") or 0) > 0
