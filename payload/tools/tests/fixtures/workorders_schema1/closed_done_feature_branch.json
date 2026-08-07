@@ -1,0 +1,284 @@
+{
+ "closed_at": "2026-08-04T17:49:59Z",
+ "created": "2026-08-04T02:40:42Z",
+ "forced": false,
+ "git_branch": "feat/hlg-screenshot-scrubbing",
+ "parts": [
+  {
+   "agent_task_id": "agent-a3a3e9b73a67a6419",
+   "evidence": {
+    "commits": 0,
+    "duration_s": 1605.696,
+    "error_rate": 0.0,
+    "followup_fixes": 0,
+    "followup_hours": 24,
+    "metrics_record_found": true,
+    "reverts": 0,
+    "tests_detected": true,
+    "tests_failed": 162,
+    "tests_passed": 1431,
+    "tool_errors": 0,
+    "turns": 136
+   },
+   "goal": "Backend \u2014 batched extraction from the source file",
+   "log": {
+    "evidence": "Command: .venv/bin/python -m pytest api/tests/test_source_extract.py -v\n\nBefore implementation: ModuleNotFoundError: No module named 'hlg_api.source_extract' (1 \u2026[truncated for fixture]",
+    "files_touched": [
+     "api/src/hlg_api/source_extract.py",
+     "api/tests/test_source_extract.py"
+    ],
+    "ok": true,
+    "part_id": "p1",
+    "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+    "skills_used": [],
+    "summary": "Implemented Task 1 exactly as specified: wrote api/tests/test_source_extract.py, confirmed it failed with ModuleNotFoundError, wrote api/src/hlg_api/source_extr \u2026[truncated for fixture]"
+   },
+   "model": "session",
+   "part_id": "p1",
+   "role": "generalist",
+   "role_score": 0,
+   "score": null,
+   "skills": [],
+   "status": "done",
+   "verdict": "dirty"
+  },
+  {
+   "agent_task_id": "agent-a3a3e9b73a67a6419",
+   "evidence": {
+    "commits": 0,
+    "duration_s": 1605.696,
+    "error_rate": 0.0,
+    "followup_fixes": 0,
+    "followup_hours": 24,
+    "metrics_record_found": true,
+    "reverts": 0,
+    "tests_detected": true,
+    "tests_failed": 162,
+    "tests_passed": 1431,
+    "tool_errors": 0,
+    "turns": 136
+   },
+   "goal": "Backend \u2014 API routes + CORS origin for the marking harness",
+   "log": {
+    "evidence": "pytest api/tests/test_align_extract_routes.py -v before: 6 failed, 1 passed. After (with test_routes.py too): 53 passed, 1 warning.",
+    "files_touched": [
+     "api/src/hlg_api/routes.py",
+     "pipeline/src/hlg_pipeline/settings.py",
+     "api/tests/test_align_extract_routes.py"
+    ],
+    "ok": true,
+    "part_id": "p2",
+    "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+    "skills_used": [],
+    "summary": "Added the /api/align/{game_uuid}/screenshots and /clip FastAPI routes plus the marking harness's CORS origin, wrote and verified failing-then-passing route test \u2026[truncated for fixture]"
+   },
+   "model": "session",
+   "part_id": "p2",
+   "role": "generalist",
+   "role_score": 0,
+   "score": null,
+   "skills": [],
+   "status": "done",
+   "verdict": "dirty"
+  },
+  {
+   "agent_task_id": "agent-a3a3e9b73a67a6419",
+   "evidence": {
+    "commits": 0,
+    "duration_s": 1605.696,
+    "error_rate": 0.0,
+    "followup_fixes": 0,
+    "followup_hours": 24,
+    "metrics_record_found": true,
+    "reverts": 0,
+    "tests_detected": true,
+    "tests_failed": 162,
+    "tests_passed": 1431,
+    "tool_errors": 0,
+    "turns": 136
+   },
+   "goal": "`align_serve.mjs` \u2014 expose the API base URL to the browser bundle",
+   "log": {
+    "evidence": "npx vitest run tests/alignServe.test.ts before: 2 failed, 67 passed. After: 69 passed (69). Diff confirmed byte-identical to plan in commit 2a84148 -- to be spl \u2026[truncated for fixture]",
+    "files_touched": [
+     "tools/align_serve.mjs",
+     "web/tests/alignServe.test.ts"
+    ],
+    "ok": true,
+    "part_id": "p3",
+    "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+    "skills_used": [],
+    "summary": "Extended the marking-page test and replaced markPage in tools/align_serve.mjs to stamp window.__HLG_API_BASE__, verified fail-then-pass (69/69). Files landed in \u2026[truncated for fixture]"
+   },
+   "model": "session",
+   "part_id": "p3",
+   "role": "generalist",
+   "role_score": 0,
+   "score": null,
+   "skills": [],
+   "status": "done",
+   "verdict": "dirty"
+  },
+  {
+   "agent_task_id": "agent-a3a3e9b73a67a6419",
+   "evidence": {
+    "commits": 0,
+    "duration_s": 1605.696,
+    "error_rate": 0.0,
+    "followup_fixes": 0,
+    "followup_hours": 24,
+    "metrics_record_found": true,
+    "reverts": 0,
+    "tests_detected": true,
+    "tests_failed": 162,
+    "tests_passed": 1431,
+    "tool_errors": 0,
+    "turns": 136
+   },
+   "goal": "Frontend \u2014 pure windowing/cache logic",
+   "log": {
+    "evidence": "npx vitest run tests/screenshotWindow.test.ts before: module not found, 0 tests. After: 10 passed (10). Landed in commit 2a84148 alongside p3/p5's files -- to b \u2026[truncated for fixture]",
+    "files_touched": [
+     "web/lib/screenshotWindow.ts",
+     "web/tests/screenshotWindow.test.ts"
+    ],
+    "ok": true,
+    "part_id": "p4",
+    "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+    "skills_used": [],
+    "summary": "Implemented web/lib/screenshotWindow.ts and its 10 tests per plan Task 4 verbatim; fail-then-pass confirmed. Same git race swept p3/p5's files into this commit  \u2026[truncated for fixture]"
+   },
+   "model": "session",
+   "part_id": "p4",
+   "role": "generalist",
+   "role_score": 0,
+   "score": null,
+   "skills": [],
+   "status": "done",
+   "verdict": "dirty"
+  },
+  {
+   "agent_task_id": "agent-a3a3e9b73a67a6419",
+   "evidence": {
+    "commits": 0,
+    "duration_s": 1605.696,
+    "error_rate": 0.0,
+    "followup_fixes": 0,
+    "followup_hours": 24,
+    "metrics_record_found": true,
+    "reverts": 0,
+    "tests_detected": true,
+    "tests_failed": 162,
+    "tests_passed": 1431,
+    "tool_errors": 0,
+    "turns": 136
+   },
+   "goal": "Frontend \u2014 hold-to-repeat keyboard hook",
+   "log": {
+    "evidence": "npx vitest run tests/useHoldRepeat.test.ts before impl: module not found, 1 failed. After: 6 passed (6). Files landed in commit 2a84148 alongside p4's files due \u2026[truncated for fixture]",
+    "files_touched": [
+     "web/lib/useHoldRepeat.ts",
+     "web/tests/useHoldRepeat.test.ts"
+    ],
+    "ok": true,
+    "part_id": "p5",
+    "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+    "skills_used": [],
+    "summary": "Implemented web/lib/useHoldRepeat.ts and its 6 tests per plan Task 5; content verified byte-identical to spec, but a concurrent parallel commit swept the two fi \u2026[truncated for fixture]"
+   },
+   "model": "session",
+   "part_id": "p5",
+   "role": "generalist",
+   "role_score": 0,
+   "score": null,
+   "skills": [],
+   "status": "done",
+   "verdict": "dirty"
+  },
+  {
+   "agent_task_id": "agent-a3a3e9b73a67a6419",
+   "evidence": {
+    "commits": 0,
+    "duration_s": 1605.696,
+    "error_rate": 0.0,
+    "followup_fixes": 0,
+    "followup_hours": 24,
+    "metrics_record_found": true,
+    "reverts": 0,
+    "tests_detected": true,
+    "tests_failed": 162,
+    "tests_passed": 1431,
+    "tool_errors": 0,
+    "turns": 136
+   },
+   "goal": "Frontend \u2014 `ScreenshotPicker` carousel component",
+   "log": {
+    "evidence": "npx vitest run tests/ScreenshotPicker.test.tsx before: import resolution failure, 0 tests. After: 6 passed (6).",
+    "files_touched": [
+     "web/components/ScreenshotPicker.tsx",
+     "web/components/ScreenshotPicker.module.css",
+     "web/tests/ScreenshotPicker.test.tsx"
+    ],
+    "ok": true,
+    "part_id": "p6",
+    "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+    "skills_used": [],
+    "summary": "Implemented ScreenshotPicker carousel component + CSS module via TDD. Found and fixed a real over-fetching bug (added a fetchingRef guard to serialize batch fet \u2026[truncated for fixture]"
+   },
+   "model": "session",
+   "part_id": "p6",
+   "role": "generalist",
+   "role_score": 0,
+   "score": null,
+   "skills": [],
+   "status": "done",
+   "verdict": "dirty"
+  },
+  {
+   "agent_task_id": "agent-a3a3e9b73a67a6419",
+   "evidence": {
+    "commits": 0,
+    "duration_s": 1605.696,
+    "error_rate": 0.0,
+    "followup_fixes": 0,
+    "followup_hours": 24,
+    "metrics_record_found": true,
+    "reverts": 0,
+    "tests_detected": true,
+    "tests_failed": 162,
+    "tests_passed": 1431,
+    "tool_errors": 0,
+    "turns": 136
+   },
+   "goal": "Integrate `ScreenshotPicker` into `AlignmentMarker`",
+   "log": {
+    "evidence": "npx vitest run tests/AlignmentMarker.test.tsx: 83 passed. npm run test: 609 passed (37 files). npm run typecheck: exit 0. pytest pipeline/tests api/tests -m not \u2026[truncated for fixture]",
+    "files_touched": [
+     "web/components/AlignmentMarker.tsx",
+     "web/components/AlignmentMarker.module.css",
+     "web/tools/alignEntry.tsx",
+     "web/tests/AlignmentMarker.test.tsx"
+    ],
+    "ok": true,
+    "part_id": "p7",
+    "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+    "skills_used": [],
+    "summary": "Integrated ScreenshotPicker into AlignmentMarker: apiBase prop, hunting/clip pickerMode state, handleScreenshotSelect/handleBackToPicker, Escape shortcut, picke \u2026[truncated for fixture]"
+   },
+   "model": "session",
+   "part_id": "p7",
+   "role": "generalist",
+   "role_score": 0,
+   "score": null,
+   "skills": [],
+   "status": "done",
+   "verdict": "dirty"
+  }
+ ],
+ "plan_doc": "/home/dev/dev/HurstDataConsultingLLC/HDCx68Sports/68_Highlight_Generator/docs/superpowers/plans/2026-08-03-screenshot-scrubbing.md",
+ "plan_id": "wo-20260804-implement-screenshot-based-scrubbing-for-the-045b34",
+ "project": "-Users-ryanhurst-dev-HurstDataConsultingLLC-HDCx68Sports-68-Highlight-Generator",
+ "schema": 1,
+ "source": "plan",
+ "task": "Implement screenshot-based scrubbing for the alignment wizard's period-start (sprint) binding hunt"
+}
