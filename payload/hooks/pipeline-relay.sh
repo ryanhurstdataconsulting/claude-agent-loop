@@ -111,17 +111,18 @@ RELAYS = {
         "  next  Skill(superpowers:writing-plans) — break the design into tasks\n"
         "  then  python3 ~/.claude/tools/plan_task.py --from-plan <plan-doc> "
         "--task \"<the request>\"\n"
-        "The work order is what makes the work measurable. Without it, nothing "
-        "downstream can attribute or assess this task."
+        "The plan is what makes the work measurable. Without it, nothing "
+        "downstream can attribute or score this task."
     ),
     "writing-plans": (
-        "PIPELINE RELAY: once this plan document is written, create the work "
-        "order BEFORE implementing:\n"
+        "PIPELINE RELAY: once this plan document is written, create the plan "
+        "artifact BEFORE implementing:\n"
         "  python3 ~/.claude/tools/plan_task.py --from-plan <plan-doc> "
         "--task \"<the request>\"\n"
-        "Then per part: make_brief.py <plan-id> <part-id> to dispatch, "
-        "plan_task.py --log <plan-id> --part <id> --json <file> to record each "
-        "return, and assess_task.py <plan-id> --repo . at the end."
+        "Every step returned is already assigned and briefed — dispatch it "
+        "directly. Then per step: plan_task.py --record <task_id> --step <id> "
+        "--json <file> to record each return, and score_task.py --auto "
+        "<task_id> at the end."
     ),
 }
 

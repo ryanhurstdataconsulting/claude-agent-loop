@@ -39,6 +39,17 @@ assert sys.argv[1] in h['additionalContext'], 'missing: '+sys.argv[1]
 " "$2" >/dev/null 2>&1
 }
 
+# absent <stdout> <needle> — asserts substring is NOT present
+absent() {
+  echo "$1" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+h=d['hookSpecificOutput']
+assert h['hookEventName']=='PostToolUse', 'wrong hookEventName'
+assert sys.argv[1] not in h['additionalContext'], 'should be absent: '+sys.argv[1]
+" "$2" >/dev/null 2>&1
+}
+
 # 1. brainstorming -> relay naming writing-plans as the next link.
 out="$(run s1 Skill superpowers:brainstorming)"; rc=$?
 [ $rc -eq 0 ] && pass "1 brainstorming: exit 0" || die "1 exit $rc"
@@ -52,11 +63,20 @@ else die "1 brainstorming: missing the spec/decomposition warning"; fi
 # 2. writing-plans -> relay naming plan_task.py --from-plan.
 out="$(run s2 Skill superpowers:writing-plans)"
 if contains "$out" "plan_task.py --from-plan"; then
-  pass "2 writing-plans: points at the work order"
+  pass "2 writing-plans: points at plan_task.py --from-plan"
 else die "2 writing-plans: no work-order step (got: $out)"; fi
-if contains "$out" "make_brief.py"; then
-  pass "2 writing-plans: names the dispatch step"
-else die "2 writing-plans: no dispatch step"; fi
+if contains "$out" "plan_task.py --record"; then
+  pass "2 writing-plans: uses --record for recording"
+else die "2 writing-plans: missing --record step"; fi
+if contains "$out" "score_task.py --auto"; then
+  pass "2 writing-plans: uses score_task.py --auto"
+else die "2 writing-plans: missing score_task.py --auto"; fi
+if absent "$out" "make_brief.py"; then
+  pass "2 writing-plans: make_brief.py not present"
+else die "2 writing-plans: make_brief.py should be absent"; fi
+if absent "$out" "assess_task.py"; then
+  pass "2 writing-plans: assess_task.py not present"
+else die "2 writing-plans: assess_task.py should be absent"; fi
 
 # 3. An unrelated skill is silent.
 out="$(run s3 Skill sports-analyst)"
