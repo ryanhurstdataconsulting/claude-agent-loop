@@ -128,7 +128,11 @@ def task_records(plan):
         out.append({
             "schema": SCHEMA,
             "kind": "task",
-            "task_id": step.get("agent_task_id") or "%s-%s" % (plan.get("task_id"), step.get("id")),
+            # score_task.step_task_id() is the single definition of this key —
+            # score_task.py --auto keys each step's kind:"score" record with it
+            # too, and the two must agree exactly or no heuristic rule can ever
+            # reach a plan's scores.
+            "task_id": score_task.step_task_id(plan, step),
             "plan_id": plan.get("task_id"),
             "part_id": step.get("id"),
             "session_id": plan.get("session_id"),
@@ -177,7 +181,7 @@ def run_records(plan):
             outcome = "failure"
         else:
             outcome = "partial"
-        task_id = step.get("agent_task_id") or "%s-%s" % (plan.get("task_id"), step.get("id"))
+        task_id = score_task.step_task_id(plan, step)
         out.append({
             "schema": "run.v1",
             "kind": "run",

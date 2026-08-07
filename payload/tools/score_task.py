@@ -24,10 +24,14 @@ Three modes:
   verdict. Loads the plan (``plan_task.load()``), fills every step's
   ``assessment`` from test results, tool errors, and git evidence (reverts,
   follow-up-fix commits) via ``auto_assess()``, saves the plan back, then
-  appends ONE rolled-up ``kind:"score"`` record whose ``scales.evidence``
-  reflects the worst verdict across every step (dirty beats unknown beats
-  clean) plus ``scales.rework`` when any step shows a revert (``"major"``) or
-  a follow-up fix (``"minor"``). Ported from the now-legacy
+  appends ONE ``kind:"score"`` record PER STEP, each keyed by
+  ``step_task_id()`` — the same key ``loop_close.task_records()`` gives that
+  step's ``kind:"task"`` record, which is what makes the score reachable from
+  ``heuristics_eval.py``. Each record's ``scales.evidence`` maps that step's
+  own verdict, plus ``scales.rework`` when the step shows a revert
+  (``"major"``) or a follow-up fix (``"minor"``). The worst verdict across the
+  plan is still printed as a summary, but it is not what gets stored: a plan-
+  level id joins no task record at all. Ported from the now-legacy
   ``assess_task.py`` — see ``verdict()``/``metrics_for()``/``git_evidence()``.
 
 * **--new-scale**: ``--new-scale <id> --levels "a>b>c" --applies-to "<text>"
@@ -286,6 +290,35 @@ def evidence_scale_for(v):
     return EVIDENCE_SCALE[v]
 
 
+def step_task_id(plan, step):
+    """The metrics join key for one step.
+
+    THE join key, not a join key: ``loop_close.task_records()`` and
+    ``loop_close.run_records()`` call this same function to key the
+    ``kind:"task"`` / ``kind:"run"`` records they emit, and ``--auto`` calls it
+    to key that step's ``kind:"score"`` record. They must agree exactly —
+    ``heuristics_eval.py`` only ever reaches a score by looking up a task
+    record's own ``task_id`` in the score index, so a key that drifts by one
+    character makes every rule blind to the score. Keeping the expression in
+    one place is what stops that drift.
+
+    A linked step keys on the subagent's own ``agent-<id>``; an unlinked one
+    falls back to ``<plan task_id>-<step id>``.
+    """
+    return step.get("agent_task_id") or "%s-%s" % (
+        plan.get("task_id"), step.get("id"))
+
+
+def _step_rework(step):
+    """None / "minor" / "major" from one step's assessed evidence."""
+    ev = (step.get("assessment") or {}).get("evidence") or {}
+    if (ev.get("reverts") or 0) > 0:
+        return "major"
+    if (ev.get("followup_fixes") or 0) > 0:
+        return "minor"
+    return None
+
+
 def _worst_verdict(plan):
     """dirty > unknown > clean across every assessed step of a plan.
 
@@ -306,16 +339,10 @@ def _rework_flag(plan):
     A revert anywhere outranks a follow-up fix: "major" wins over "minor"
     when a plan shows both.
     """
-    major = minor = False
-    for step in plan.get("steps", []):
-        ev = (step.get("assessment") or {}).get("evidence") or {}
-        if (ev.get("reverts") or 0) > 0:
-            major = True
-        if (ev.get("followup_fixes") or 0) > 0:
-            minor = True
-    if major:
+    flags = {_step_rework(s) for s in plan.get("steps", [])}
+    if "major" in flags:
         return "major"
-    if minor:
+    if "minor" in flags:
         return "minor"
     return None
 
@@ -331,36 +358,44 @@ def _auto(args):
                 followup_hours=args.followup_hours)
     pt.save(args.state_dir, plan)
 
-    worst = _worst_verdict(plan)
-    scales = {"evidence": evidence_scale_for(worst)}
-    rework = _rework_flag(plan)
-    if rework:
-        scales["rework"] = rework
-
-    task_id, id_note = _normalize_task_id(args.auto)
-    if id_note:
-        print(id_note)
-
     note = dt.redact(args.note)[0] if args.note else ""
-    record = {
-        "schema": SCHEMA,
-        "kind": "score",
-        "task_id": task_id,
-        "session_id": args.session_id,
-        "project": args.project,
-        # ts_end is the score's single timestamp; the shared _append_record
-        # shard-router keys the monthly shard off ts_end.
-        "ts_end": _now_iso(),
-        "scales": scales,
-        "note": note,
-        "resources_deployed": _lookup_resources(args.metrics_dir, task_id),
-    }
-    if args.task_shape:
-        record["task_shape"] = args.task_shape
-    hm._append_record(args.metrics_dir, record)
+    ts_end = _now_iso()
+    written = 0
 
+    # ONE score record PER STEP, keyed exactly as loop_close.task_records()
+    # keys that step's kind:"task" record. A single rolled-up record keyed on
+    # the plan's own wo-* id joined to nothing: heuristics_eval.py reaches a
+    # score only by looking up a task record's task_id, and no task record has
+    # ever carried a plan id. The plan id is also not a bare human/session id,
+    # so it is NOT run through _normalize_task_id() — session-prefixing it
+    # would move the key further from the task record, not closer.
     for step in plan.get("steps", []):
         a = step.get("assessment") or {}
+        scales = {"evidence": evidence_scale_for(a.get("verdict") or "unknown")}
+        rework = _step_rework(step)
+        if rework:
+            scales["rework"] = rework
+        sid = step_task_id(plan, step)
+        record = {
+            "schema": SCHEMA,
+            "kind": "score",
+            "task_id": sid,
+            "plan_id": plan.get("task_id"),
+            "part_id": step.get("id"),
+            "session_id": args.session_id,
+            "project": args.project,
+            # ts_end is the score's single timestamp; the shared _append_record
+            # shard-router keys the monthly shard off ts_end.
+            "ts_end": ts_end,
+            "scales": scales,
+            "note": note,
+            "resources_deployed": _lookup_resources(args.metrics_dir, sid),
+        }
+        if args.task_shape:
+            record["task_shape"] = args.task_shape
+        hm._append_record(args.metrics_dir, record)
+        written += 1
+
         ev = a.get("evidence") or {}
         print("%s  %-9s %-14s tests %s/%s  errors %s  commits %s  %s" % (
             step.get("id"), a.get("verdict"), step.get("agent") or "-",
@@ -368,9 +403,14 @@ def _auto(args):
             ev.get("tests_passed", 0) + ev.get("tests_failed", 0),
             ev.get("tool_errors") if ev.get("tool_errors") is not None else "-",
             ev.get("commits", 0), step.get("goal", "")))
-    print("score_task: recorded worst-verdict score for task %r: evidence=%s%s"
-          % (task_id, scales["evidence"],
-             (", rework=%s" % scales["rework"]) if "rework" in scales else ""))
+
+    worst = _worst_verdict(plan)
+    rolled = _rework_flag(plan)
+    print("score_task: recorded %d per-step score record(s) for plan %r — each "
+          "joins its own step's kind:\"task\" record. Worst verdict across the "
+          "plan: %s (evidence=%s%s)."
+          % (written, plan.get("task_id"), worst, evidence_scale_for(worst),
+             (", rework=%s" % rolled) if rolled else ""))
     return 0
 
 
@@ -505,8 +545,9 @@ def _build_parser():
     ap.add_argument("--note", help="a free-text note; redacted before storage")
     ap.add_argument("--auto", metavar="TASK_ID",
                     help="objectively assess every step of this plan and "
-                         "append one rolled-up kind:\"score\" record, instead "
-                         "of a subjective --scale self-score")
+                         "append one kind:\"score\" record per step — keyed "
+                         "like that step's kind:\"task\" record — instead of "
+                         "a subjective --scale self-score")
     ap.add_argument("--state-dir",
                     default=str(pathlib.Path.home() / ".claude" / "plans"),
                     help="plan storage dir for --auto (plan_task.py's own "

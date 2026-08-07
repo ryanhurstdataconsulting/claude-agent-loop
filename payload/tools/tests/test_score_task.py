@@ -597,11 +597,77 @@ class TestAutoCLI(unittest.TestCase):
         self.assertIsNotNone(assessment)
         self.assertEqual(assessment["verdict"], "clean")
 
+        # The score is keyed by the STEP's join key (its agent id here), not by
+        # a session-prefixed plan id — the plan id joins no task record.
         scores = [rec for rec in self._newest_shard_records()
-                  if rec["kind"] == "score"
-                  and rec["task_id"] == "session-" + task_id]
-        self.assertEqual(len(scores), 1)
+                  if rec["kind"] == "score"]
+        self.assertEqual([s["task_id"] for s in scores], ["agent-aaa"])
         self.assertEqual(scores[0]["scales"]["evidence"], "proven")
+        self.assertEqual(scores[0]["plan_id"], task_id)
+        self.assertEqual(scores[0]["part_id"], "p1")
+
+    def test_auto_never_writes_a_session_prefixed_plan_id(self):
+        # The regression this replaces: --auto used to run the plan's own wo-*
+        # id through _normalize_task_id(), producing "session-wo-..." — a key
+        # that matches no kind:"task" record anywhere, so _lookup_resources()
+        # always returned [] and no heuristic rule could ever see the score.
+        task_id = "wo-20260701-noprefix-abcdef"
+        self._save_plan(task_id, [{
+            "id": "p1", "goal": "g", "agent": "dba", "skills": [],
+            "status": "done", "agent_task_id": None,
+            "return": {"ok": True, "files_touched": []}, "assessment": None,
+        }])
+        r = self._run("--auto", task_id, "--state-dir", str(self.state),
+                      "--metrics-dir", str(self.metrics))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        ids = [rec["task_id"] for rec in self._newest_shard_records()
+               if rec["kind"] == "score"]
+        self.assertEqual(ids, ["%s-p1" % task_id])
+        self.assertNotIn("session-" + task_id, ids)
+
+    def test_auto_writes_one_score_per_step_each_with_its_own_verdict(self):
+        task_id = "wo-20260701-perstep-abcdef"
+        self._plant_task_metric("agent-good")
+        self._save_plan(task_id, [
+            {"id": "p1", "goal": "g1", "agent": "dba", "skills": [],
+             "status": "done", "agent_task_id": "agent-good",
+             "return": {"ok": True, "files_touched": []}, "assessment": None},
+            {"id": "p2", "goal": "g2", "agent": "dba", "skills": [],
+             "status": "failed", "agent_task_id": "agent-bad",
+             "return": {"ok": False}, "assessment": None},
+        ])
+        r = self._run("--auto", task_id, "--state-dir", str(self.state),
+                      "--metrics-dir", str(self.metrics))
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+        scores = {rec["task_id"]: rec for rec in self._newest_shard_records()
+                  if rec["kind"] == "score"}
+        self.assertEqual(sorted(scores), ["agent-bad", "agent-good"])
+        # Per-step, not rolled up: the clean step keeps "proven" instead of
+        # inheriting the failed step's "asserted".
+        self.assertEqual(scores["agent-good"]["scales"]["evidence"], "proven")
+        self.assertEqual(scores["agent-bad"]["scales"]["evidence"], "asserted")
+
+    def test_auto_score_resources_join_the_steps_task_record(self):
+        task_id = "wo-20260701-resources-abcdef"
+        hm._append_record(str(self.metrics), {
+            "schema": 1, "kind": "task", "task_id": "agent-res",
+            "resources_deployed": ["dba", "explain-analyze-query-tuning"],
+            "tests": {"detected": True, "passed": 2, "failed": 0},
+            "tool_errors": 0, "error_rate": 0.0, "ts_end": st._now_iso(),
+        })
+        self._save_plan(task_id, [{
+            "id": "p1", "goal": "g", "agent": "dba", "skills": [],
+            "status": "done", "agent_task_id": "agent-res",
+            "return": {"ok": True, "files_touched": []}, "assessment": None,
+        }])
+        r = self._run("--auto", task_id, "--state-dir", str(self.state),
+                      "--metrics-dir", str(self.metrics))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        score = [rec for rec in self._newest_shard_records()
+                 if rec["kind"] == "score"][0]
+        self.assertEqual(score["resources_deployed"],
+                         ["dba", "explain-analyze-query-tuning"])
 
     def test_auto_flags_rework_on_followup_fix(self):
         repo = tempfile.mkdtemp()
@@ -634,16 +700,16 @@ class TestAutoCLI(unittest.TestCase):
 
         scores = [rec for rec in self._newest_shard_records()
                   if rec["kind"] == "score"
-                  and rec["task_id"] == "session-" + task_id]
+                  and rec["task_id"] == "%s-p1" % task_id]
         self.assertEqual(len(scores), 1)
         self.assertEqual(scores[0]["scales"]["rework"], "minor")
         self.assertEqual(scores[0]["scales"]["evidence"], "asserted")
 
-    def test_auto_rolls_up_worst_verdict_across_multiple_steps(self):
+    def test_auto_reports_the_worst_verdict_across_multiple_steps(self):
         # End-to-end companion to TestWorstVerdict: a two-step plan where one
         # step assesses clean and the other assesses dirty (a failed status
-        # forces dirty regardless of evidence) must roll up to the dirty
-        # step's evidence scale, not the clean one's.
+        # forces dirty regardless of evidence). The rollup is now a printed
+        # SUMMARY, not the stored key — each step still stores its own score.
         task_id = "wo-20260701-multistep-abcdef"
         self._plant_task_metric("agent-clean")
         self._save_plan(task_id, [
@@ -663,11 +729,79 @@ class TestAutoCLI(unittest.TestCase):
         self.assertEqual(plan["steps"][0]["assessment"]["verdict"], "clean")
         self.assertEqual(plan["steps"][1]["assessment"]["verdict"], "dirty")
 
-        scores = [rec for rec in self._newest_shard_records()
-                  if rec["kind"] == "score"
-                  and rec["task_id"] == "session-" + task_id]
-        self.assertEqual(len(scores), 1)
-        self.assertEqual(scores[0]["scales"]["evidence"], "asserted")
+        self.assertIn("Worst verdict across the plan: dirty", r.stdout)
+        self.assertIn("2 per-step score record(s)", r.stdout)
+
+        scores = {rec["task_id"] for rec in self._newest_shard_records()
+                  if rec["kind"] == "score"}
+        self.assertEqual(scores, {"agent-clean", "%s-p2" % task_id})
+
+
+class TestScoreJoinsTaskRecord(unittest.TestCase):
+    """The SCORE -> LEARN wiring, end to end.
+
+    heuristics_eval.py reaches a score ONLY by looking up a kind:"task"
+    record's own task_id in the score index. So the contract that matters is
+    not "a score record was written" — it is "the score record's task_id is
+    also a task record's task_id, in the same shard." This closes the loop the
+    way it actually runs: create a plan, close it through loop_close (which
+    emits the kind:"task" records), then run --auto.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.state = pathlib.Path(self.tmp) / "state"
+        self.metrics = pathlib.Path(self.tmp) / "metrics"
+        self.metrics.mkdir()
+        self.projects = pathlib.Path(self.tmp) / "projects"
+        self.projects.mkdir()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_auto_score_task_ids_match_loop_close_task_record_ids(self):
+        import loop_close  # noqa: E402  (same-dir tool import)
+
+        task_id = "wo-20260701-joinproof-abcdef"
+        pt.save(str(self.state), {
+            "schema": pt.SCHEMA, "task_id": task_id, "task": "t",
+            "created": "2026-07-01T00:00:00Z", "git_branch": "main",
+            "project": "proj",
+            "steps": [
+                {"id": "p1", "goal": "g1", "agent": "dba",
+                 "skills": ["explain-analyze-query-tuning"], "status": "done",
+                 "agent_task_id": "agent-linked",
+                 "return": {"ok": True, "files_touched": []},
+                 "assessment": None},
+                {"id": "p2", "goal": "g2", "agent": "generalist", "skills": [],
+                 "status": "done", "agent_task_id": None,
+                 "return": {"ok": True, "files_touched": []},
+                 "assessment": None},
+            ]})
+
+        rc = loop_close.main([task_id, "--base-dir", str(self.state),
+                              "--metrics-dir", str(self.metrics),
+                              "--projects-dir", str(self.projects)])
+        self.assertEqual(rc, 0)
+
+        rc = st.main(["--auto", task_id, "--state-dir", str(self.state),
+                      "--metrics-dir", str(self.metrics)])
+        self.assertEqual(rc, 0)
+
+        shards = sorted(self.metrics.glob("*.jsonl"))
+        recs = [json.loads(ln) for shard in shards
+                for ln in shard.read_text().splitlines() if ln.strip()]
+        task_ids = {r["task_id"] for r in recs if r["kind"] == "task"}
+        score_ids = {r["task_id"] for r in recs if r["kind"] == "score"}
+
+        self.assertEqual(task_ids, {"agent-linked", "%s-p2" % task_id})
+        self.assertEqual(score_ids, task_ids)
+
+        # And the join carries the resources through, which is what
+        # heuristics_eval's per-resource rules actually read.
+        by_id = {r["task_id"]: r for r in recs if r["kind"] == "score"}
+        self.assertEqual(by_id["agent-linked"]["resources_deployed"],
+                         ["dba", "explain-analyze-query-tuning"])
 
 
 if __name__ == "__main__":
