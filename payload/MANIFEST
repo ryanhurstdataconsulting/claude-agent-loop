@@ -279,6 +279,11 @@ link-file registry/guides/audit-dispatch.md
 link-file registry/guides/audit-run.md
 link-file registry/guides/audit-store.md
 link-file registry/guides/background-build-watch.md
+link-file registry/guides/bb-write.md
+link-file registry/guides/bb-read.md
+link-file registry/guides/bb-gc.md
+link-file registry/guides/worktree-exec.md
+link-file registry/guides/consensus-vote.md
 link-file registry/guides/check-coverage.md
 link-file registry/guides/cloud-architect.md
 link-file registry/guides/data-visualization.md
