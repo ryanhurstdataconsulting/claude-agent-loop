@@ -7,7 +7,7 @@ set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 TOOLS_ROOT="$(cd "$HERE/.." && pwd)"
-AUDIT_RUN="$TOOLS_ROOT/audit_run.sh"
+AUDIT_RUN="$TOOLS_ROOT/dispatch/run.sh"
 fail=0
 pass() { echo "PASS - $1"; }
 die() { echo "FAIL - $1"; fail=1; }
@@ -21,7 +21,7 @@ trap 'rm -rf "$TMP"' EXIT
 # top-level "}" at column 1, write it to a standalone file, then source that.
 awk '/^_emit_run_record\(\) \{/,/^\}/' "$AUDIT_RUN" > "$TMP/helper.sh"
 if [ ! -s "$TMP/helper.sh" ]; then
-  die "could not extract _emit_run_record from audit_run.sh — check the function name/shape matches what this test expects"
+  die "could not extract _emit_run_record from dispatch/run.sh — check the function name/shape matches what this test expects"
 else
   pass "extracted _emit_run_record definition"
 fi
@@ -31,7 +31,7 @@ source "$TMP/helper.sh"
 
 # _emit_run_record <verdict> <package-key> <metrics-dir> [cli-rc]
 # TOOL_DIR is the variable _emit_run_record actually reads to locate
-# obs_emit.py (see audit_run.sh); point it at this repo's own payload/tools/
+# obs_emit.py (see dispatch/run.sh); point it at this repo's own payload/tools/
 # so the test exercises the real lookup instead of relying on this dev
 # machine's ~/.claude/tools symlink happening to resolve back into this
 # checkout.

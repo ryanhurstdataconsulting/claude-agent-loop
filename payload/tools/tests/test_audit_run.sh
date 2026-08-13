@@ -16,7 +16,7 @@ set -u
 # fire on a developer's desktop every time the suite runs.
 export AUDIT_NOTIFY=0
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT="$(cd "$HERE/.." && pwd)/audit_run.sh"
+SCRIPT="$(cd "$HERE/.." && pwd)/dispatch/run.sh"
 fail=0
 pass() { echo "PASS - $1"; }
 die() { echo "FAIL - $1"; fail=1; }
@@ -237,11 +237,11 @@ AUDIT_CLAUDE_BIN="$STUB" bash "$SCRIPT" "$PKG" "$STORE" --key "$NESTED_KEY" \
 [ -f "$STORE/audit/runs/$NESTED_KEY/$(date +%F).json" ] \
   && pass "15 a nested key writes its run log at the nested path" \
   || die "15 nested run log not written where the key says"
-ROUNDTRIP="$(cd "$HERE/.." && python3 -c '
+ROUNDTRIP="$(cd "$HERE/../dispatch" && python3 -c '
 import sys
 sys.path.insert(0, ".")
-import audit_dispatch
-print(audit_dispatch.last_state(sys.argv[1], sys.argv[2]).get("last_audited_sha") or "")
+import dispatch
+print(dispatch.last_state(sys.argv[1], sys.argv[2]).get("last_audited_sha") or "")
 ' "$STORE" "$NESTED_KEY" 2>/dev/null)"
 [ -n "$ROUNDTRIP" ] \
   && pass "15b audit_dispatch.last_state reads the nested key back" \

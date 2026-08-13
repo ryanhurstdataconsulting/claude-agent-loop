@@ -21,9 +21,10 @@ import unittest
 from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(TOOLS))
-import audit_dispatch as ad  # noqa: E402  (path set up above)
-import audit_store as st  # noqa: E402
+DISPATCH = TOOLS / "dispatch"
+sys.path.insert(0, str(DISPATCH))
+import dispatch as ad  # noqa: E402  (path set up above)
+import store as st  # noqa: E402
 
 NOW = datetime.datetime(2026, 7, 31, tzinfo=datetime.timezone.utc)
 
@@ -336,12 +337,12 @@ class TestLastStateKeyRoundTrip(unittest.TestCase):
 
     A key is the package's string in ``config.json``, and real keys are
     workspace-relative paths, so a run log lands at
-    ``runs/<client-dir>/<package>/``. While ``audit_run.sh`` re-derived the
+    ``runs/<client-dir>/<package>/``. While ``run.sh`` re-derived the
     key from the package directory's basename, state was written one level
     shallower than this function looks — so every nested package reported
     "never audited" every single night, at full agent cost. ``--key`` closes
     that; these cases pin it from the reader's side, and
-    ``test_audit_run.sh`` case 15 pins the writer's.
+    ``test_run.sh`` case 15 pins the writer's.
     """
 
     def setUp(self):
@@ -388,10 +389,10 @@ class TestLastStateKeyRoundTrip(unittest.TestCase):
 
 
 def _stub_runner(directory, script):
-    """Write an executable audit_run.sh stand-in and return its path.
+    """Write an executable run.sh stand-in and return its path.
 
     NO test may invoke a real ``claude`` session, and the cheapest way to
-    guarantee that is for no test to invoke the real ``audit_run.sh`` either.
+    guarantee that is for no test to invoke the real ``run.sh`` either.
     Every orchestration case injects one of these instead.
     """
     path = pathlib.Path(directory) / "audit-run-stub.sh"
@@ -404,7 +405,7 @@ class TestOrchestration(unittest.TestCase):
     """Dispatch has to actually drive the sweep, not just describe it.
 
     The launchd job invokes this module and nothing else, so if the due list
-    never reaches ``audit_run.sh`` the whole layer is inert: it decides what
+    never reaches ``run.sh`` the whole layer is inert: it decides what
     to audit every night and audits none of it.
     """
 
@@ -476,7 +477,7 @@ class TestOrchestration(unittest.TestCase):
 
     def test_dry_run_invokes_nothing(self):
         runner = self._runner(self._recording_stub())
-        with mock.patch.object(ad.audit_digest, "write_digest") as digest:
+        with mock.patch.object(ad.digest, "write_digest") as digest:
             rc, out = self._main("--audit-run-bin", runner, "--dry-run")
         self.assertEqual(rc, 0)
         self.assertEqual(self._logged_calls(), [])
@@ -491,7 +492,7 @@ class TestOrchestration(unittest.TestCase):
 
     def test_the_digest_is_written_once_at_the_end(self):
         runner = self._runner(self._recording_stub())
-        with mock.patch.object(ad.audit_digest, "write_digest",
+        with mock.patch.object(ad.digest, "write_digest",
                                return_value="/tmp/digest.md") as digest:
             rc, _ = self._main("--audit-run-bin", runner)
         self.assertEqual(rc, 0)
@@ -501,7 +502,7 @@ class TestOrchestration(unittest.TestCase):
         (pathlib.Path(self.tmp) / "audit" / "config.json").write_text(json.dumps({
             "schema": 1, "per_night_cap": 5, "tiers": {}}))
         runner = self._runner(self._recording_stub())
-        with mock.patch.object(ad.audit_digest, "write_digest") as digest:
+        with mock.patch.object(ad.digest, "write_digest") as digest:
             rc, out = self._main("--audit-run-bin", runner)
         self.assertEqual(rc, 0)
         self.assertIn("nothing due", out)
@@ -653,9 +654,9 @@ class TestAuditRunBinIndirection(unittest.TestCase):
         self.assertIsNone(result["returncode"])
         self.assertIn("AUDIT_RUN_BIN", result["error"])
 
-    def test_the_default_is_the_sibling_audit_run_script(self):
+    def test_the_default_is_the_sibling_run_script(self):
         with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(ad.audit_run_bin(), str(TOOLS / "audit_run.sh"))
+            self.assertEqual(ad.audit_run_bin(), str(DISPATCH / "run.sh"))
 
 
 if __name__ == "__main__":

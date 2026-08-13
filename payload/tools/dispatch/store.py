@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""audit_store — the consolidated output store for the repo-security-audit scheduler.
+"""store — the consolidated output store for the repo-security-audit scheduler.
 
 A scheduling layer that runs the repo-security-audit agent across many
 packages on a rotating cadence needs one durable, local place to land runs,
@@ -61,7 +61,7 @@ COMMIT_EMAIL = "claude-agent-loop@localhost"
 # accident. `audit/logs/` is excluded again underneath — the nightly job's raw
 # stdout is a rotating byproduct, not an artifact worth versioning.
 GITIGNORE = """\
-# Managed by audit_store.ensure_store — do not hand-edit.
+# Managed by dispatch/store.py's ensure_store — do not hand-edit.
 # The audit store is the only tracked family under this root. Everything else
 # here (the resource loop's monthly JSONL shards, budget checkpoints, caches)
 # is transient working data, kept ignored so a stray `git add -A` in this
@@ -155,8 +155,8 @@ def commit_paths(root, paths, message):
 
     This is what makes the store's git history real rather than decorative:
     ``ensure_store`` initialises the repo, and every tool that writes an
-    artifact — ``audit_run.sh`` for a run log or a quarantined findings
-    document, :func:`audit_digest.write_digest` for a digest — calls this
+    artifact — ``run.sh`` for a run log or a quarantined findings
+    document, :func:`digest.write_digest` for a digest — calls this
     immediately afterwards, so each night's output has a recoverable, versioned
     home instead of sitting untracked forever.
 

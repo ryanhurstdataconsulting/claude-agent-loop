@@ -20,13 +20,13 @@
          a workspace that holds no packages simply audits nothing. The real
          root belongs beside the package list it goes with, in the local-only
          store config at ~/.claude/metrics/audit/config.json under the
-         "workspace" key, which is never committed. audit_dispatch falls back
+         "workspace" key, which is never committed. dispatch.py falls back
          to ~/dev when that key is absent. -->
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>-lc</string>
-        <string>LOGS="$HOME/.claude/metrics/audit/logs"; mkdir -p "$LOGS"; exec /usr/bin/env python3 "$HOME/.claude/tools/audit_dispatch.py" >>"$LOGS/repo-audit.out.log" 2>>"$LOGS/repo-audit.err.log"</string>
+        <string>LOGS="$HOME/.claude/metrics/audit/logs"; mkdir -p "$LOGS"; exec /usr/bin/env python3 "$HOME/.claude/tools/dispatch/dispatch.py" >>"$LOGS/repo-audit.out.log" 2>>"$LOGS/repo-audit.err.log"</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

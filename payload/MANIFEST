@@ -216,10 +216,6 @@ link-file hooks/loop-close.sh
 link-file hooks/obs-events.sh
 
 # --- tools/ (top-level files) -----------------------------------------------
-link-file tools/audit_digest.py
-link-file tools/audit_dispatch.py
-link-file tools/audit_run.sh
-link-file tools/audit_store.py
 link-file tools/bb_common.py
 link-file tools/bb_gc.py
 link-file tools/bb_read.py
@@ -258,6 +254,9 @@ link-file tools/ssh_tunnel_keepalive.sh
 link-file tools/themes_pending.py
 link-file tools/usage_poll.py
 link-file tools/worktree_exec.py
+# The dispatcher and its job definitions ship as one directory so the code and
+# its jobs/*.yml can never drift apart across an install.
+link-dir tools/dispatch
 link-dir tools/templates
 link-dir tools/tests
 

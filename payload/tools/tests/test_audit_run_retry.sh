@@ -6,7 +6,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-AUDIT_RUN="$(cd "$HERE/.." && pwd)/audit_run.sh"
+AUDIT_RUN="$(cd "$HERE/.." && pwd)/dispatch/run.sh"
 fail=0
 pass() { echo "PASS - $1"; }
 die() { echo "FAIL - $1"; fail=1; }

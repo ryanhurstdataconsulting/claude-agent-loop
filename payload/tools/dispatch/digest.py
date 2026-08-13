@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""audit_digest — the surfacing layer for the repo-security-audit scheduler.
+"""digest — the surfacing layer for the repo-security-audit scheduler.
 
 Audits run across many packages nightly. Almost every finding is routine —
 zero counts, or a Low/Informational note nobody needs to see at 2am. If every
 run produced a notification, the human would learn to ignore notifications,
 and the one Critical that matters would get ignored right along with them. So
 the split is severity-based, not volume-based: Critical and High interrupt
-immediately (``audit_run.sh`` already does this with its own OS notification,
+immediately (``run.sh`` already does this with its own OS notification,
 built from the same rule as :func:`severity_alert` below); everything else —
 Medium, Low, Informational, and every clean run — waits here, batched into a
 digest the human reviews on their own schedule. A run whose verdict is
@@ -15,9 +15,9 @@ crashed audit is exactly the silent failure this layer must not swallow by
 lumping it in with routine "nothing to see" runs.
 
 Layout, under ``<root>/audit/`` (``root`` is normally
-:func:`audit_store.store_root`, ``~/.claude/metrics``)::
+:func:`store.store_root`, ``~/.claude/metrics``)::
 
-    runs/<pkg>/<date>.json     read-only input, written by audit_run.sh
+    runs/<pkg>/<date>.json     read-only input, written by run.sh
     digests/<date>.md          one rendered digest per day this ran
     digests/.last-digest       ISO instant of the last render (the "since" window)
     digests/.last-read         the date-stamp of the last digest a human has seen
@@ -45,7 +45,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import audit_store  # noqa: E402  (path set up above)
+import store  # noqa: E402  (path set up above)
 
 SEVERITIES = ("critical", "high", "medium", "low")
 ALERT_VERDICTS = ("blocked", "failed", "quarantined")
@@ -63,7 +63,7 @@ def _iso(dt):
 def findings_map(run):
     """Return ``run``'s findings object, or ``None`` when there is not one.
 
-    ``audit_run.sh`` writes ``"findings": null`` rather than fabricating zero
+    ``run.sh`` writes ``"findings": null`` rather than fabricating zero
     counts whenever it cannot parse a severity object out of the CLI's
     output. That distinction is the whole value of the no-fabrication
     contract, and it has to survive all the way to the reader: ``null`` means
@@ -140,13 +140,13 @@ def _iter_runs(root):
     single-level ``iterdir()`` walk would find only the intermediate
     directory, which holds no JSON at all, and every nested package would
     silently vanish from the digest. The yielded key is the path relative to
-    ``runs/``, which is exactly the key ``audit_dispatch.last_state`` reads
-    back and the key ``audit_run.sh --key`` was handed.
+    ``runs/``, which is exactly the key ``dispatch.last_state`` reads
+    back and the key ``run.sh --key`` was handed.
 
     Tolerates a missing runs directory, an unreadable or malformed file, and
     a JSON payload that isn't an object — each is skipped rather than
     aborting the whole digest over one corrupt entry, the same tolerance
-    ``audit_dispatch.last_state`` applies to these identical files.
+    ``dispatch.last_state`` applies to these identical files.
     ``state.json`` is a per-package scheduler marker, not a run record, and
     is always excluded.
     """
@@ -267,7 +267,7 @@ def write_digest(root):
     the path written, as a string.
 
     The digest and its window marker are then committed to the store's own
-    git history through :func:`audit_store.commit_paths` — no remote, no
+    git history through :func:`store.commit_paths` — no remote, no
     push, explicit paths only. A store that cannot be committed to (no repo
     yet, a git error) still gets the file: the commit is best-effort and
     never changes what this function returns.
@@ -288,7 +288,7 @@ def write_digest(root):
     out_path.write_text(text, encoding="utf-8")
     marker.write_text(_iso(now) + "\n", encoding="utf-8")
 
-    audit_store.commit_paths(
+    store.commit_paths(
         root,
         [out_path, marker],
         "audit(store): digest for %s" % now.strftime("%Y-%m-%d"),
@@ -337,7 +337,7 @@ def main(argv=None):
     parser.add_argument(
         "--root",
         default=None,
-        help="store root (default: %s)" % audit_store.store_root(),
+        help="store root (default: %s)" % store.store_root(),
     )
     parser.add_argument(
         "--nudge",
@@ -345,7 +345,7 @@ def main(argv=None):
         help="print the SessionStart nudge line if a digest is unread, and nothing else",
     )
     args = parser.parse_args(argv)
-    root = args.root or audit_store.store_root()
+    root = args.root or store.store_root()
 
     if args.nudge:
         line = nudge(root)

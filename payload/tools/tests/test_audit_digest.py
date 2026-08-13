@@ -3,7 +3,7 @@
 repo-security-audit scheduler.
 
 Hermetic: every case builds its store under ``tempfile.mkdtemp()`` and tears
-it down. Fixtures mirror the REAL run-log schema ``audit_run.sh``'s
+it down. Fixtures mirror the REAL run-log schema ``run.sh``'s
 ``_write_run_log`` writes (schema, package, package_path, verdict, head_sha,
 findings{critical,high,medium,low}, run_at, gates, note, ...) — read straight
 from the shell function, not guessed at. No package name here is a real
@@ -21,8 +21,10 @@ import unittest
 from contextlib import redirect_stdout
 
 TOOLS = pathlib.Path(__file__).resolve().parent.parent
+# prose_grammar_gate.py stays in tools/; the digest moved to tools/dispatch/.
 sys.path.insert(0, str(TOOLS))
-import audit_digest as ad  # noqa: E402  (path set up above)
+sys.path.insert(0, str(TOOLS / "dispatch"))
+import digest as ad  # noqa: E402  (path set up above)
 import prose_grammar_gate as pg  # noqa: E402
 
 
@@ -111,7 +113,7 @@ class TestSeverityAlert(unittest.TestCase):
         self.assertIn("acme", msg)
 
     def test_unparseable_findings_on_an_ok_run_still_alert(self):
-        # The no-fabrication contract's one consumer. audit_run.sh writes
+        # The no-fabrication contract's one consumer. run.sh writes
         # `findings: null` rather than inventing zeros when it cannot parse
         # the CLI's output; rendering that as 0/0 here would turn "nobody
         # knows" into an all-clear, and this is the only place that mistake
@@ -255,7 +257,7 @@ class TestWriteDigest(unittest.TestCase):
         self.assertTrue(marker.read_text(encoding="utf-8").strip())
 
     def test_the_digest_is_committed_to_the_store(self):
-        import audit_store as st
+        import store as st
 
         st.ensure_store(self.tmp)
         write_run(self.tmp, make_run("acme", "2026-07-30", critical=1))

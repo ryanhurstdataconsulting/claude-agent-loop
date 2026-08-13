@@ -1,7 +1,7 @@
 #!/bin/bash
-# audit_run.sh — one package, one unattended security audit, zero disturbance.
+# run.sh — one package, one unattended security audit, zero disturbance.
 #
-# usage: audit_run.sh <package-path> <store-root> [--key KEY] [--dry-run]
+# usage: run.sh <package-path> <store-root> [--key KEY] [--dry-run]
 #                      [--dispatch-run-id ID]
 #
 # Runs the repo-security-auditor agent headlessly against ONE package and
@@ -58,25 +58,38 @@ set -u
 
 SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# --- tools/ location ----------------------------------------------------------
+# This script lives in tools/dispatch/, so the wider tools/ tree — the two
+# safety gates and obs_emit.py — is one level up, in the framework checkout and
+# in the installed ~/.claude tree alike (MANIFEST links tools/dispatch as a
+# directory, so `..` from it is ~/.claude/tools). The explicit fallback covers
+# an unusual install where that parent is not the tools tree.
+TOOL_DIR="$(cd "$SELF_DIR/.." 2>/dev/null && pwd)"
+if [ -z "$TOOL_DIR" ] || [ ! -f "$TOOL_DIR/obs_emit.py" ]; then
+  TOOL_DIR="$HOME/.claude/tools"
+fi
+
 # --- gate location ------------------------------------------------------------
-# The gates sit beside this script both in the framework checkout and in the
-# installed ~/.claude/tools tree, so a sibling lookup covers both; the explicit
-# fallback covers an unusual install, and the env override keeps tests hermetic.
+# The gates live in tools/ alongside obs_emit.py; the explicit fallback covers
+# an unusual install, and the env override keeps tests hermetic.
 GATE_DIR="${AUDIT_GATE_DIR:-}"
 if [ -z "$GATE_DIR" ]; then
-  if [ -f "$SELF_DIR/secret_pii_scrub_gate.py" ]; then
-    GATE_DIR="$SELF_DIR"
+  if [ -f "$TOOL_DIR/secret_pii_scrub_gate.py" ]; then
+    GATE_DIR="$TOOL_DIR"
   else
     GATE_DIR="$HOME/.claude/tools"
   fi
 fi
 
-# audit_store.py sits beside this script in both trees, the same way the gates
-# do, so the same sibling-then-fallback lookup resolves it.
-if [ -f "$SELF_DIR/audit_store.py" ]; then
-  TOOL_DIR="$SELF_DIR"
+# store.py sits beside this script in both trees, so a sibling lookup with the
+# same shape resolves it — but it is a DIFFERENT directory from TOOL_DIR now
+# that this script lives one level down, which is why it gets its own variable.
+# Before the tools/dispatch/ move these two were the same lookup; conflating
+# them again would send either the store commit or obs_emit.py to the wrong tree.
+if [ -f "$SELF_DIR/store.py" ]; then
+  DISPATCH_DIR="$SELF_DIR"
 else
-  TOOL_DIR="$HOME/.claude/tools"
+  DISPATCH_DIR="$HOME/.claude/tools/dispatch"
 fi
 
 MAX_TURNS="${AUDIT_MAX_TURNS:-40}"
@@ -90,7 +103,7 @@ METRICS_DIR="${METRICS_DIR:-$HOME/.claude/metrics}"
 
 usage() {
   cat >&2 <<'EOF'
-usage: audit_run.sh <package-path> <store-root> [--key KEY] [--dry-run]
+usage: run.sh <package-path> <store-root> [--key KEY] [--dry-run]
                      [--dispatch-run-id ID]
 
   <package-path> — a git repository to audit; never modified
@@ -171,7 +184,7 @@ PKG_NAME="$(basename "$PKG")"
 
 # The store key. `basename` is the fallback for a hand-run invocation only —
 # the dispatcher passes --key so that what is WRITTEN here and what
-# audit_dispatch.last_state() READS are the same string by construction, not
+# dispatch.last_state() READS are the same string by construction, not
 # by coincidence. A key is a relative path and may contain '/'; an absolute
 # path or a '..' segment would let a caller write outside the store, so both
 # are refused rather than sanitised.
@@ -181,7 +194,7 @@ case "$PKG_KEY" in
   ..|../*|*/..|*/../*) usage_err "--key must not contain '..': $PKG_KEY" ;;
 esac
 
-# audit_dispatch.py's nightly sweep always passes --dispatch-run-id, so
+# dispatch.py's nightly sweep always passes --dispatch-run-id, so
 # OTEL_RESOURCE_ATTRIBUTES' parent.run links every package it launched in one
 # sweep back to that sweep. A direct, manual invocation still gets some
 # value stable for this one process — this PID does not change between the
@@ -416,7 +429,7 @@ PY
 _commit_store() {
   msg="$1"
   shift
-  python3 "$TOOL_DIR/audit_store.py" --root "$STORE" --message "$msg" commit \
+  python3 "$DISPATCH_DIR/store.py" --root "$STORE" --message "$msg" commit \
     "$@" >/dev/null 2>&1 || true
   return 0
 }
@@ -850,7 +863,7 @@ critical, high, medium, and low, each an integer count."
   # unattended auditor reading potentially adversarial repository content.
   # PKG_KEY and DISPATCH_RUN_ID are built into a JSON string below through
   # python3's json.dumps rather than hand-rolled shell interpolation: PKG_KEY
-  # is a hand-edited package name from audit/config.json (audit_dispatch.py),
+  # is a hand-edited package name from audit/config.json (dispatch.py),
   # validated only against absolute paths and '..' (see the case statement
   # above) — a '"' or '\' in it passes that check untouched. Naive
   # `"...${PKG_KEY}..."` interpolation would let either character break the
@@ -1127,7 +1140,7 @@ audit(security): scheduled audit of $PKG_KEY — $DATE
 
 (1) Task & Change
 Scheduled, unattended repo-security audit of $PKG_KEY at ${HEAD_SHA:0:8}, run
-by audit_run.sh inside a throwaway git worktree so the live checkout was never
+by dispatch/run.sh inside a throwaway git worktree so the live checkout was never
 touched. SECURITY_AUDIT.md records the findings and their severities; any other
 file in this commit is a pre-approved low-risk fix the auditor applied itself.
 The branch is created for review only and is never pushed.

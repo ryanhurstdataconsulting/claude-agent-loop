@@ -148,18 +148,19 @@ out=$(env HOME="$H" "$HOOK"); rc=$?
 printf '%s\n' "$out" | grep -q 'Loop digest pending:' && { echo "FAIL: digest nudge fired with tool missing"; fails=1; }
 
 # --- Audit-digest nudge (section 5) -------------------------------------------
-# The hook resolves audit_digest.py and the store from $HOME/.claude, so every
+# The hook resolves dispatch/digest.py and the store from $HOME/.claude, so every
 # case runs under an isolated HOME=$TMP. The nudge fires once for an unread
 # digest, then goes quiet — self-consuming, unlike the plain threshold nudges
 # above — and stays quiet when there is no digest at all or the tool is missing.
 
-# Build an isolated HOME with audit_digest.py (and its audit_store.py
+# Build an isolated HOME with dispatch/digest.py (and its dispatch/store.py
 # dependency) installed. Prints the HOME path.
 audit_home() {
   h="$SANDBOX/$1"
   rm -rf "$h"
-  mkdir -p "$h/.claude/tools" "$h/.claude/metrics/audit/digests"
-  cp "$TOOLS/audit_digest.py" "$TOOLS/audit_store.py" "$h/.claude/tools/" 2>/dev/null
+  mkdir -p "$h/.claude/tools/dispatch" "$h/.claude/metrics/audit/digests"
+  cp "$TOOLS/dispatch/digest.py" "$TOOLS/dispatch/store.py" \
+     "$h/.claude/tools/dispatch/" 2>/dev/null
   printf '%s' "$h"
 }
 

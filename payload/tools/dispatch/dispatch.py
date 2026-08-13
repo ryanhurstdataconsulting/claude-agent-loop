@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""audit_dispatch — the nightly repo-security-audit sweep: decide, then run.
+"""dispatch — the nightly repo-security-audit sweep: decide, then run.
 
 The scheduling layer runs the existing repo-security-audit agent across many
 packages on a rotating cadence. Something has to decide, every night, which
@@ -7,16 +7,16 @@ of those packages actually need a run — a package on a weekly cadence that
 was audited yesterday should not burn agent turns again, but a package
 nobody has ever gotten to, or one whose HEAD moved after the interval
 elapsed, must not be silently skipped either. This module owns the whole
-night: it reads the consolidated store (``audit_store``) and each package's
+night: it reads the consolidated store (``store``) and each package's
 git HEAD to answer "is this due, and why", then drives the due list through
-``audit_run.sh`` one package at a time and closes with a single
-``audit_digest`` render.
+``run.sh`` one package at a time and closes with a single
+``digest`` render.
 
 The two halves stay strictly separable, which is what keeps them testable.
 The policy half (:func:`is_due`, :func:`select_due`) never shells out to
 anything. The execution half (:func:`run_package`, :func:`run_due`) never
-invokes ``claude`` directly — it invokes ``audit_run.sh``, resolved through
-the ``AUDIT_RUN_BIN`` environment variable exactly as ``audit_run.sh``
+invokes ``claude`` directly — it invokes ``run.sh``, resolved through
+the ``AUDIT_RUN_BIN`` environment variable exactly as ``run.sh``
 resolves the CLI through ``AUDIT_CLAUDE_BIN``. That indirection is a safety
 control, not a convenience: no test may ever launch a real, billed agent
 session, and an injectable runner is the only way to guarantee it.
@@ -56,8 +56,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import audit_digest
-import audit_store
+import digest
+import store
 
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 EXCLUDED_TIER = "excluded"
@@ -124,7 +124,7 @@ def last_state(root, pkg):
 
     ``pkg`` is the package's key in ``config.json``, which is also the store
     path it is recorded under — and which may be a nested, workspace-relative
-    path such as ``<client-dir>/<package>``. ``audit_run.sh`` is handed the
+    path such as ``<client-dir>/<package>``. ``run.sh`` is handed the
     same string with ``--key`` rather than re-deriving one from the package
     directory's basename, so what is written and what is read here are the
     same path by construction. They were not always: while the runner derived
@@ -234,7 +234,7 @@ def select_due(root, cfg, workspace, now):
     the selection: the failure is caught per-package and turned into a due
     entry whose reason names the error, so a broken package is loud in the
     output rather than silently missing from it. The same holds one level
-    up: ``audit_store.load_config`` does not validate tier shape or
+    up: ``store.load_config`` does not validate tier shape or
     package-entry types, so a hand-edited ``config.json`` can hand this
     function a tier that isn't a dict, or a ``packages`` entry that isn't a
     string. Both are read inside a guarded region for exactly that reason —
@@ -340,7 +340,7 @@ def resolve_workspace(cli_value, cfg):
     configured = (cfg or {}).get("workspace")
     if configured is not None:
         if not isinstance(configured, str) or not configured.strip():
-            raise audit_store.ConfigError(
+            raise store.ConfigError(
                 "the 'workspace' key in audit/config.json must be a non-empty "
                 "string naming the directory that holds the packages; got %r"
                 % (configured,)
@@ -351,12 +351,12 @@ def resolve_workspace(cli_value, cfg):
 
 
 def audit_run_bin():
-    """Resolve the ``audit_run.sh`` this sweep will invoke.
+    """Resolve the ``run.sh`` this sweep will invoke.
 
     ``AUDIT_RUN_BIN`` overrides the sibling lookup, and the override is read
     with ``os.environ.get`` and NO default so that a variable which is set
     but EMPTY resolves to the empty string and fails loudly. That is the same
-    rule ``audit_run.sh`` applies to ``AUDIT_CLAUDE_BIN``, and for the same
+    rule ``run.sh`` applies to ``AUDIT_CLAUDE_BIN``, and for the same
     reason: a harness that computes an empty path must not fall through to
     the real thing and start a live, billed agent session. A prior agent did
     exactly that; the indirection exists so no test can repeat it.
@@ -365,13 +365,13 @@ def audit_run_bin():
     if override is not None:
         return override
     return os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "audit_run.sh")
+                        "run.sh")
 
 
 def _notify(text):
     """Fire one macOS notification. Never raises, never fails the sweep.
 
-    Honours ``AUDIT_NOTIFY=0`` the same way ``audit_run.sh`` does, so a test
+    Honours ``AUDIT_NOTIFY=0`` the same way ``run.sh`` does, so a test
     suite or a headless run stays silent.
     """
     if os.environ.get(NOTIFY_ENV) == "0":
@@ -393,7 +393,7 @@ def _notify(text):
 def run_package(entry, root, binary=None):
     """Run one due package's audit. Returns a result dict; never raises.
 
-    Invokes ``audit_run.sh <path> <root> --key <package> --dispatch-run-id
+    Invokes ``run.sh <path> <root> --key <package> --dispatch-run-id
     <run-id>``. Passing the key explicitly is what keeps the store path this
     run WRITES identical to the one :func:`last_state` READS on the next
     night — see that function. The run id is this sweep's own OTel linkage
@@ -486,7 +486,7 @@ def collect_alerts(root, due, since):
                 "audit: %s — the run left no log for tonight; its outcome is "
                 "unknown and its scheduler state was not recorded" % package)
             continue
-        text = audit_digest.severity_alert(record)
+        text = digest.severity_alert(record)
         if text:
             alerts.append(text)
     return alerts
@@ -497,7 +497,7 @@ def main(argv=None):
     parser.add_argument(
         "--root",
         default=None,
-        help="store root (default: %s)" % audit_store.store_root(),
+        help="store root (default: %s)" % store.store_root(),
     )
     parser.add_argument(
         "--workspace",
@@ -521,18 +521,18 @@ def main(argv=None):
     parser.add_argument(
         "--audit-run-bin",
         default=None,
-        help="path to audit_run.sh (default: the AUDIT_RUN_BIN environment "
+        help="path to run.sh (default: the AUDIT_RUN_BIN environment "
              "variable, else the copy beside this script)",
     )
     args = parser.parse_args(argv)
-    root = args.root or audit_store.store_root()
+    root = args.root or store.store_root()
 
     # Reconcile the layout before anything reads or writes it. This is what
     # repairs a store created by an earlier version, whose `.gitignore` was
     # empty and therefore left every sibling of `audit/` merely untracked.
-    audit_store.ensure_store(root)
-    audit_store.assert_no_remote(root)
-    cfg = audit_store.load_config(root)
+    store.ensure_store(root)
+    store.assert_no_remote(root)
+    cfg = store.load_config(root)
     workspace = resolve_workspace(args.workspace, cfg)
     now = datetime.datetime.now(datetime.timezone.utc)
     since = now.strftime(DATE_FORMAT)
@@ -566,7 +566,7 @@ def main(argv=None):
         return 0
 
     results = run_due(root, due, runner)
-    digest_path = audit_digest.write_digest(root)
+    digest_path = digest.write_digest(root)
     alerts = collect_alerts(root, due, since)
     for line in alerts:
         _notify(line)

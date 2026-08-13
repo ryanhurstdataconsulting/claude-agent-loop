@@ -16,8 +16,8 @@ import tempfile
 import unittest
 
 TOOLS = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(TOOLS))
-import audit_store as st  # noqa: E402  (path set up above)
+sys.path.insert(0, str(TOOLS / "dispatch"))
+import store as st  # noqa: E402  (path set up above)
 
 
 class TestStoreRoot(unittest.TestCase):
