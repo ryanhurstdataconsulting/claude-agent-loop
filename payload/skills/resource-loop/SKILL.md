@@ -74,7 +74,13 @@ more than the measurement is worth.
 
 1. **MATCH** — semantically match the task against the index. Think in task
    shapes, not keywords: "make the chart pop" matches
-   visual-hierarchy-layered-charts. Consult `~/.claude/registry/TRIGGERS.md` as a
+   visual-hierarchy-layered-charts. Each row also carries a `domain` column
+   (`core-dev` · `language` · `infra` · `quality-security` · `data-ai` ·
+   `dev-experience` · `specialized-domains` · `business-product` ·
+   `meta-orchestration` · `research-analysis`) — narrow to the task's domain
+   first, then semantically match within that smaller set. This is a
+   candidate-set filter, not a hard gate: when a task genuinely spans two
+   domains, both stay reachable. Consult `~/.claude/registry/TRIGGERS.md` as a
    keyword and file-glob shortcut alongside the semantic match — it is an
    accelerator, not a replacement for reading the task. Read the full guide
    (`~/.claude/registry/guides/<name>.md`) for anything you will deploy.
