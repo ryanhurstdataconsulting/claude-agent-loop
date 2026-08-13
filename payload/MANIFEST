@@ -217,6 +217,10 @@ link-file tools/audit_digest.py
 link-file tools/audit_dispatch.py
 link-file tools/audit_run.sh
 link-file tools/audit_store.py
+link-file tools/bb_common.py
+link-file tools/bb_gc.py
+link-file tools/bb_read.py
+link-file tools/bb_write.py
 link-file tools/build_watch.sh
 link-file tools/check_coverage.sh
 link-file tools/classify_visibility.py
@@ -256,6 +260,7 @@ link-dir tools/tests
 link-file launchd/com.hdc.claude-agent-loop.repo-audit.plist
 link-file launchd/com.hdc.claude-agent-loop.usage-poll.plist
 link-file launchd/com.hdc.claude-agent-loop.obs-ship.plist
+link-file launchd/com.hdc.claude-agent-loop.blackboard-gc.plist
 
 # --- observability/ ---------------------------------------------------------
 link-dir observability
