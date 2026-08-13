@@ -200,6 +200,9 @@ link-file skills/CATALOG.md
 link-file agents/sql-safety-reviewer.md
 link-dir agents/roles
 
+# --- coordination/ (GNAP-reserved filenames, Phase 7 — no protocol logic yet) --
+link-dir coordination
+
 # --- hooks/ ---------------------------------------------------------------
 link-file hooks/inject-resource-loop.sh
 link-file hooks/harvest-metrics.sh

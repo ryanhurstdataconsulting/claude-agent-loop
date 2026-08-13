@@ -348,6 +348,13 @@ The registry is inert until a session runs the loop over it:
   mutation) into the blackboard's `consensus_state` table — a queryable
   audit trail, not an enforcement mechanism; nothing in this codebase
   currently blocks any of those three action types on a vote tally.
+- **`payload/coordination/`** (`claims.json`, `handoffs.json`,
+  `results.json`, `agents.json`) — four filenames reserved for a future
+  multi-machine GNAP-style coordination protocol, per the agent-loop-v2
+  design spec's Phase 7. Each file holds only
+  `{"_reserved": "not implemented — see agent-loop-v2-design.md §7"}`.
+  Nothing reads or writes them yet — this section only exists so a future
+  implementer doesn't have to pick these names under time pressure.
 
 ### 3. Doc-cascade layer — the instruction precedence
 
