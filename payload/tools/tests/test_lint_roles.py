@@ -31,7 +31,7 @@ Body.
 
 REGISTRY = """# index
 ## MCPs
-| mcp-x | mcp | sample server |
+| mcp-x | mcp | data-ai | sample server |
 """
 
 
