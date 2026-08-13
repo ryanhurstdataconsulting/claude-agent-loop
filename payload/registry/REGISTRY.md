@@ -53,3 +53,6 @@
 | audit-run | tool | quality-security | Run one unattended repo-security audit — throwaway worktree, safety gates, commit to `audit/security-<date>`, never pushes |
 | audit-digest | tool | quality-security | Severity-gated repo-audit alerts (Critical/High interrupt now) plus the batched digest and its SessionStart nudge |
 | repo-audit-action | tool | quality-security | Per-change security audit in GitHub Actions — the four categories a checkout can answer, with the two it cannot stated on every run |
+| bb-write | tool | meta-orchestration | Write a stamped row (task_id/phase/agent_id/ts/sha256) to the blackboard — shared_state, events, consensus_state, workflow_state, or artifacts |
+| bb-read | tool | meta-orchestration | Read blackboard rows back, filtered by task_id (or artifact_id for the artifacts table) |
+| bb-gc | tool | meta-orchestration | Nightly blackboard retention trim — 30-day shared_state/artifacts, 90-day events; consensus_state/workflow_state kept indefinitely |

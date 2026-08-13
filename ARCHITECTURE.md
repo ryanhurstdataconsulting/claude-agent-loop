@@ -330,6 +330,13 @@ The registry is inert until a session runs the loop over it:
   repeating checkpoint directive from 85% until a checkpoint file exists on
   disk. It reads only the cache (never the network), and it stays silent
   whenever that cache is missing or stale. Kill switch: `USAGE_BUDGET_DISABLE=1`.
+- **`payload/tools/bb_write.py` / `bb_read.py` / `bb_gc.py`** (backed by
+  `bb_common.py`) are the sanctioned access path to
+  `~/.claude/state/blackboard.db` — a single-file, WAL-mode SQLite store for
+  cross-agent shared state (hints/results, a phase-transition event log,
+  consensus votes, resumable plan checkpoints, and large-payload artifact
+  pointers) that sits alongside, not instead of, the metrics `*.jsonl`
+  ledger: metrics is the permanent record, the blackboard is working state.
 
 ### 3. Doc-cascade layer — the instruction precedence
 
