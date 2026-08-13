@@ -222,6 +222,7 @@ link-file tools/bb_gc.py
 link-file tools/bb_read.py
 link-file tools/bb_write.py
 link-file tools/build_watch.sh
+link-file tools/consensus_vote.py
 link-file tools/check_coverage.sh
 link-file tools/classify_visibility.py
 link-file tools/distill_transcripts.py

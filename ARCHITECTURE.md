@@ -343,6 +343,11 @@ The registry is inert until a session runs the loop over it:
   step. Merge-back is a normal `git merge` in that step's own project repo,
   gated on the step's recorded `return.ok`, not on `loop_autocommit.sh`
   (which only ever commits to this framework repo or `~/.claude`).
+- **`payload/tools/consensus_vote.py`** records and tallies a 2-of-3
+  consensus vote for a gated action (`git push`, publish/release, an AWS
+  mutation) into the blackboard's `consensus_state` table — a queryable
+  audit trail, not an enforcement mechanism; nothing in this codebase
+  currently blocks any of those three action types on a vote tally.
 
 ### 3. Doc-cascade layer — the instruction precedence
 
