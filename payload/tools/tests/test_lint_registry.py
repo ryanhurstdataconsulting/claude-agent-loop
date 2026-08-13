@@ -3,7 +3,9 @@ import pathlib, sys, tempfile, unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import lint_registry as lr
 
-GOOD = "# Registry\n| alpha | skill | Use for X |\n| beta | tool | Use for Y |\n"
+GOOD = ("# Registry\n"
+        "| alpha | skill | dev-experience | Use for X |\n"
+        "| beta | tool | meta-orchestration | Use for Y |\n")
 
 
 class TestLint(unittest.TestCase):
@@ -22,12 +24,22 @@ class TestLint(unittest.TestCase):
         self.assertEqual(lr.lint(self._ws(GOOD, ["alpha", "beta"])), [])
 
     def test_separator_and_header_rows_ignored(self):
-        text = "| name | category | trigger |\n|---|---|---|\n| alpha | skill | X |\n"
+        text = ("| name | category | domain | trigger |\n"
+                 "|---|---|---|---|\n"
+                 "| alpha | skill | dev-experience | X |\n")
         self.assertEqual(lr.lint(self._ws(text, ["alpha"])), [])
 
     def test_bad_category_flagged(self):
-        errs = lr.lint(self._ws("| alpha | wizard | X |\n", ["alpha"]))
+        errs = lr.lint(self._ws("| alpha | wizard | dev-experience | X |\n", ["alpha"]))
         self.assertTrue(any("category" in e for e in errs))
+
+    def test_bad_domain_flagged(self):
+        errs = lr.lint(self._ws("| alpha | skill | wizardry | X |\n", ["alpha"]))
+        self.assertTrue(any("domain" in e and "wizardry" in e for e in errs))
+
+    def test_empty_domain_flagged(self):
+        errs = lr.lint(self._ws("| alpha | skill |  | X |\n", ["alpha"]))
+        self.assertTrue(any("domain" in e for e in errs))
 
     def test_missing_guide_flagged(self):
         errs = lr.lint(self._ws(GOOD, ["alpha"]))
@@ -38,11 +50,13 @@ class TestLint(unittest.TestCase):
         self.assertTrue(any("gamma" in e for e in errs))
 
     def test_duplicate_names_flagged(self):
-        errs = lr.lint(self._ws("| alpha | skill | X |\n| alpha | tool | Y |\n", ["alpha"]))
+        errs = lr.lint(self._ws(
+            "| alpha | skill | dev-experience | X |\n"
+            "| alpha | tool | quality-security | Y |\n", ["alpha"]))
         self.assertTrue(any("duplicate" in e.lower() for e in errs))
 
     def test_budget_enforced(self):
-        rows = "\n".join(f"| r{i} | tool | t |" for i in range(151))
+        rows = "\n".join(f"| r{i} | tool | dev-experience | t |" for i in range(151))
         errs = lr.lint(self._ws(rows, [f"r{i}" for i in range(151)]))
         self.assertTrue(any("150" in e for e in errs))
 
@@ -58,8 +72,13 @@ class TestLint(unittest.TestCase):
         errs = lr.lint(self._ws("| only-two | cols |\n", []))
         self.assertTrue(any("malformed" in e for e in errs))
 
+    def test_three_column_row_flagged_as_malformed(self):
+        # Pre-domain-column row shape must not silently pass post-migration.
+        errs = lr.lint(self._ws("| alpha | skill | X |\n", ["alpha"]))
+        self.assertTrue(any("malformed" in e for e in errs))
+
     def test_empty_trigger_flagged(self):
-        errs = lr.lint(self._ws("| alpha | skill |  |\n", ["alpha"]))
+        errs = lr.lint(self._ws("| alpha | skill | dev-experience |  |\n", ["alpha"]))
         self.assertTrue(any("trigger" in e for e in errs))
 
 

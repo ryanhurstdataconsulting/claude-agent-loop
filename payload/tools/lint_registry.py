@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
-"""Lint the resource registry: row format, categories, guide bijection, budget."""
+"""Lint the resource registry: row format, categories, domains, guide bijection, budget."""
 import pathlib
 import re
 import sys
 
 CATEGORIES = {"superpower", "skill", "mcp", "tool", "agent"}
-ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$")
+DOMAINS = {
+    "core-dev", "language", "infra", "quality-security", "data-ai",
+    "dev-experience", "specialized-domains", "business-product",
+    "meta-orchestration", "research-analysis",
+}
+ROW = re.compile(
+    r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|$"
+)
 SEPARATOR = re.compile(r"^\|[\s\-|]+\|$")
 BUDGET = 150
 
@@ -22,11 +29,13 @@ def lint(root):
         if not m:
             errs.append(f"line {i}: malformed row: {line!r}")
             continue
-        name, cat, trigger = m.groups()
+        name, cat, domain, trigger = m.groups()
         if name == "name" and cat == "category":
             continue  # header row
         if cat not in CATEGORIES:
             errs.append(f"line {i}: bad category {cat!r} for {name!r}")
+        if domain not in DOMAINS:
+            errs.append(f"line {i}: bad domain {domain!r} for {name!r}")
         if not trigger.strip():
             errs.append(f"line {i}: empty trigger for {name!r}")
         names.append(name)
