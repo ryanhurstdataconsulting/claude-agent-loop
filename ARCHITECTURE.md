@@ -124,21 +124,21 @@ diagram.
   launchd (03:17 daily, off the :00 mark so a fleet does not stampede)
         │
         ▼
-  audit_dispatch.py                          payload/tools/audit_dispatch.py
+  dispatch.py                                payload/tools/dispatch/dispatch.py
    • resolves the workspace root: --workspace, else audit/config.json's
      `workspace` key, else ~/dev. The plist passes no --workspace at
      all — it is a template shipped verbatim to every machine, and a
      home-relative path baked into it is wrong everywhere else, and
      wrong silently
-   • reads audit_store's audit/config.json tiers
+   • reads store.py's audit/config.json tiers
    • per package: head_sha() + is_due() — tier interval elapsed AND HEAD
      moved, never audited, or unverifiable all count as due
-   • then DRIVES the sweep: one audit_run.sh per due package, in
-     sequence, and one closing digest — --dry-run prints the plan and
-     invokes nothing
+   • then DRIVES the sweep: one run.sh per due package, in sequence,
+     and one closing digest — --dry-run prints the plan and invokes
+     nothing
         │ due list (package, reason), longest-overdue first, capped
         ▼
-  audit_run.sh <pkg> <store> --key KEY       payload/tools/audit_run.sh
+  run.sh <pkg> <store> --key KEY             payload/tools/dispatch/run.sh
    • throwaway `git worktree`, detached HEAD — the live checkout is
      never read or written
    • headless `claude --agent repo-security-auditor`, scoped to the
@@ -150,14 +150,14 @@ diagram.
      the audited repo's hooks disarmed; NEVER pushes
         │ run-log JSON, one per package per night, at runs/<key>/
         ▼
-  audit_store.py                             payload/tools/audit_store.py
+  store.py                                   payload/tools/dispatch/store.py
    • ~/.claude/metrics/audit/{runs,findings,digests,quarantine,logs}
    • its own nested git repo, no remote, scoped .gitignore, and
      commit_paths() as the only writer of its history — see the
      amended metrics store contract below
         │
         ▼
-  audit_digest.py                            payload/tools/audit_digest.py
+  digest.py                                  payload/tools/dispatch/digest.py
    • severity-gated: Critical/High, a blocked/failed/quarantined
      verdict, or findings that could not be parsed at all interrupt
      immediately; everything else waits
@@ -166,13 +166,27 @@ diagram.
 ```
 
 **The chain is wired end to end.** The launchd job's `ProgramArguments`
-invoke `audit_dispatch.py`, and that one process now owns the whole night:
-select the due packages, run `audit_run.sh` against each in turn, render one
+invoke `dispatch.py`, and that one process now owns the whole night:
+select the due packages, run `run.sh` against each in turn, render one
 digest, and fire the alerts. One package failing never aborts the rest.
 `--dry-run` prints exactly what would happen and invokes nothing, so the job
 can be exercised without spending a cent. What remains reserved for the owner
 is loading the job (`launchctl bootstrap`) and the first live run, which
 spends real budget against a real repository.
+
+**The four ship as one directory, and the runner is a job definition.** They
+live together under `payload/tools/dispatch/` (linked into `~/.claude` as a
+single `link-dir`, so the code and its job definitions can never drift apart
+across an install). Which script each due package is handed comes from
+`jobs/<job-type>.yml` beside them, selected by `dispatch.py --job-type`; the
+default, `security-audit`, declares `runner: run.sh`. Job definitions are read
+by a strict flat `key: value` parser rather than PyYAML, because every tool in
+this directory is stdlib-only by design and an unattended nightly job must not
+depend on a third-party import the machine may not have — an unrecognised
+construct raises rather than being skipped, since the file names the executable
+the sweep runs. Three further job types (`dep-refresh`, `doc-drift`,
+`metric-summary`) are specified but deliberately unwritten until the move is
+proven on a real nightly run.
 
 **The Actions trigger is built, and it is honest about being partial.**
 `payload/templates/repo-security-audit.yml` is a generic workflow template —
@@ -204,8 +218,8 @@ workflow file's authority. Without the secret — and on pull requests from
 forks, where GitHub withholds secrets — the job reports the audit as skipped
 and exits green rather than going red on an infrastructure fact.
 
-**The store key is passed, never re-derived.** `audit_dispatch` hands
-`audit_run.sh` the package's own `config.json` string with `--key`, and that
+**The store key is passed, never re-derived.** `dispatch.py` hands
+`run.sh` the package's own `config.json` string with `--key`, and that
 string is the path the run log is written under. A package key is a
 workspace-relative path, so a runner that derived its own key from
 `basename <package-path>` wrote state one level shallower than
@@ -239,7 +253,7 @@ one hanging hook would otherwise make the run un-interruptible and leave a
 worktree registered in the developer's repository indefinitely.
 
 **A decision recorded here, not re-litigated: the git tool allowlist.**
-`audit_run.sh` narrows the headless agent's Bash allowlist to read-only git
+`run.sh` narrows the headless agent's Bash allowlist to read-only git
 subcommands named one at a time (`git log`, `git diff`, `git ls-files`, `git
 status`, `git rev-parse`) instead of the blanket `Bash(git:*)` the original
 design spec specified. `--add-dir` constrains the file-editing tools to the
@@ -422,7 +436,7 @@ writers; everything downstream is a reader.
 
 **`~/.claude/metrics/` is now a standalone nested git repo, and only
 `audit/` is tracked in it.** The repo-audit scheduling layer's
-`audit_store.ensure_store()` git-inits the metrics directory in place the
+`store.ensure_store()` git-inits the metrics directory in place the
 first time it runs and writes a scoped `.gitignore` — `/*`, then `!/audit/`,
 then `/audit/logs/` back out. That scope is load-bearing: the shards,
 checkpoints, and caches described below are siblings of `audit/`, and an
@@ -430,9 +444,9 @@ empty ignore file (what the first version wrote) would leave every one of
 them untracked-but-not-ignored, one `git add -A` away from being committed
 wholesale. `ensure_store()` rewrites the file whenever its content drifts, so
 a store created by an older version is repaired on the next nightly run.
-`audit_store.commit_paths()` is the only writer of that history — explicit
+`store.commit_paths()` is the only writer of that history — explicit
 paths, never `git add -A`, never a push, and never fatal to its caller — and
-`audit_run.sh` and `audit_digest.write_digest()` both call it immediately
+`run.sh` and `digest.write_digest()` both call it immediately
 after writing an artifact. That is what makes "a recoverable, versioned home"
 a fact about the store rather than a claim about it.
 
@@ -441,10 +455,10 @@ enforcement point — checked by asking `git remote` directly (failing CLOSED on
 any non-zero exit, since an unverifiable answer is not evidence the invariant
 holds) and by confirming no enclosing repository tracks the path without
 gitignoring it — but it runs at two specific call sites, not on every access:
-once per nightly dispatch, in `audit_dispatch.py` before `load_config()` reads
-anything, and in `audit_store.py`'s own manual `check` action. Neither of the
-other two audit tools re-verifies it: `audit_digest.py`'s reads
-(`_iter_runs`, `write_digest`, `nudge`) and `audit_run.sh`'s run-log write
+once per nightly dispatch, in `dispatch.py` before `load_config()` reads
+anything, and in `store.py`'s own manual `check` action. Neither of the
+other two audit tools re-verifies it: `digest.py`'s reads
+(`_iter_runs`, `write_digest`, `nudge`) and `run.sh`'s run-log write
 (`_write_run_log`) both trust the invariant the nightly dispatch already
 checked, rather than confirming it again themselves. `~/.claude/metrics` is
 the loop output root for every agent, not only the audit layer: the

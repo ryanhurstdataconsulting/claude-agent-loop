@@ -6,7 +6,7 @@
 #
 # Condition: no kind:"run" record (schema run.v1) with run_kind:"audit" and
 # a fresh ts_end has landed in the last 26 hours. Fields confirmed real at
-# payload/tools/audit_run.sh's _emit_run_record() (lines ~427-473): every
+# payload/tools/dispatch/run.sh's _emit_run_record() (lines ~427-473): every
 # repo-audit invocation appends one record shaped
 # {"schema":"run.v1","kind":"run","run_kind":"audit","outcome":...,
 # "ts_start":...,"ts_end":...} to the monthly metrics shard.
@@ -20,7 +20,7 @@
 # DO NOT provision this rule into a live Grafana instance until
 # ~/.claude/metrics/audit/config.json exists — see INSTALL.md's
 # "Repo-security-audit scheduler (one-time)" section, step 2. Without it,
-# audit_dispatch.py never writes a run_kind:"audit" record, so this condition
+# dispatch.py never writes a run_kind:"audit" record, so this condition
 # fires immediately and permanently for a reason unrelated to scheduler health.
 apiVersion: 1
 groups:

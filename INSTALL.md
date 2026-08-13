@@ -296,7 +296,7 @@ extended periods.
 
 ## Repo-security-audit scheduler (one-time)
 
-`payload/tools/audit_dispatch.py` (invoked nightly at 03:17 by
+`payload/tools/dispatch/dispatch.py` (invoked nightly at 03:17 by
 `com.hdc.claude-agent-loop.repo-audit.plist`) needs a config file this
 framework deliberately never ships or auto-generates — `audit/config.json`
 in the audit store encodes a real policy decision (which repos get
@@ -304,7 +304,7 @@ audited, how often, and every audit run is a real, billed `claude` CLI
 invocation) that only the machine's owner should make.
 
 1. **Load the launchd job** (safe to do before authoring the config below —
-   `audit_dispatch.py` fails safely: an absent config raises a `ConfigError`
+   `dispatch.py` fails safely: an absent config raises a `ConfigError`
    before anything is selected or spent, and the job is genuinely dormant in
    practice until you complete step 2):
 
@@ -325,9 +325,9 @@ invocation) that only the machine's owner should make.
    decision). Create `~/.claude/metrics/audit/config.json` with at least a
    `schema` (currently `1`), `workspace` (the directory tree to scan for
    auditable packages), `tiers` (audit-frequency tiers), and `per_night_cap`
-   (max packages audited per run). See `payload/tools/audit_store.py`'s
+   (max packages audited per run). See `payload/tools/dispatch/store.py`'s
    `load_config()` for the exact schema this file must satisfy, and
-   `payload/tools/audit_dispatch.py` for how tiers and the nightly cap are
+   `payload/tools/dispatch/dispatch.py` for how tiers and the nightly cap are
    applied.
 
 Until step 2 is done, the job fires nightly, the uncaught `ConfigError`

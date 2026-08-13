@@ -8,7 +8,7 @@
 The scheduling layer runs the repo-security-auditor unattended, nightly,
 against repositories the developer may have open with uncommitted work — so
 the whole design turns on one property: the live checkout is never touched.
-`audit_run.sh` is that guarantee made concrete. The audit happens inside a
+`run.sh` is that guarantee made concrete. The audit happens inside a
 throwaway `git worktree` checked out detached at HEAD, with a cleanup trap
 registered before the worktree is created, so a run interrupted mid-flight
 can never orphan one. Two safety gates run on the findings document before
@@ -16,21 +16,21 @@ any branch or commit exists, so an aborted run leaves the package repository
 exactly as it was.
 
 ## When to deploy (triggers)
-- Nightly, once per due package. `audit_dispatch.py` iterates its own due
+- Nightly, once per due package. `dispatch.py` iterates its own due
   list and invokes this script per package, sequentially — that chain is
   wired, not manual.
 - Manually, to preview or test a single package:
-  `audit_run.sh <package-path> <store-root> --dry-run`.
+  `run.sh <package-path> <store-root> --dry-run`.
 
 ## Interface (how to invoke)
 ```
-audit_run.sh <package-path> <store-root> [--key KEY] [--dry-run]
+run.sh <package-path> <store-root> [--key KEY] [--dry-run]
 ```
 `--key` is the package's key in `config.json`, and it is the store path this
 run writes under. It defaults to `basename <package-path>` for a hand-run
 invocation, but the dispatcher always passes it explicitly: real keys are
 workspace-relative paths, so a re-derived basename would write state to a
-path `audit_dispatch.last_state()` never reads back, and every nested package
+path `dispatch.last_state()` never reads back, and every nested package
 would report "never audited" every night at full agent cost.
 
 Exit codes the scheduler distinguishes: `0` success (committed to
@@ -79,7 +79,7 @@ been amended to match this narrower allowlist; the shipped script is
 authoritative.
 
 ## Composition (pairs with / hands off to)
-- Invoked by `audit_dispatch.py` once per due package, sequentially, with
+- Invoked by `dispatch.py` once per due package, sequentially, with
   `--key <package>` taken straight from `config.json`.
 - Invokes the pre-existing `repo-security-auditor` agent headlessly
   (`--agent repo-security-auditor`), scoped to the worktree only.
@@ -88,16 +88,16 @@ authoritative.
   `SECURITY_AUDIT.md`, all before any commit exists. These are the same
   safety gates the autonomy pipeline (`loop_autocommit.sh`) uses, reused here
   rather than reinvented.
-- Writes its run log into the layout `audit_store.py` owns and commits it to
-  the store's own local git history through `audit_store.commit_paths()` —
-  explicit paths, no remote, no push. `audit_digest.py` reads it back.
+- Writes its run log into the layout `store.py` owns and commits it to
+  the store's own local git history through `store.commit_paths()` —
+  explicit paths, no remote, no push. `digest.py` reads it back.
 - Fires an OS notification directly for a Critical/High finding — it does
   not wait for the digest. During a dispatched sweep this is suppressed
   (`AUDIT_NOTIFY=0`) because the dispatcher notifies from the run logs
   instead, so one event never produces two notifications.
 
 ## Build & maintenance notes
-Lives at `payload/tools/audit_run.sh`. Tests:
+Lives at `payload/tools/dispatch/run.sh`. Tests:
 `payload/tools/tests/test_audit_run.sh`. macOS bash-3.2 portable: no
 `mapfile`, no associative arrays, no `set -e` (gate handling reads exit
 codes, which `set -e` would turn into an abort before the blocked-run log

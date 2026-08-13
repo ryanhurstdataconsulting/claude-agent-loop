@@ -12,7 +12,7 @@
 # anywhere: grepped obs.v1's own schema (payload/tools/obs_emit.py),
 # every hook that emits into it (payload/hooks/*.sh), the metrics-shard
 # record builders (payload/tools/harvest_metrics.py, loop_close.py,
-# audit_run.sh), the OTel exporter (payload/tools/metrics_to_otlp.py — whose
+# dispatch/run.sh), the OTel exporter (payload/tools/metrics_to_otlp.py — whose
 # five real instruments are claude_agent_loop.tests, .error_rate, .verdict,
 # .resources_source, .heuristic_firings, none cost-related), and the usage
 # tracker (payload/tools/usage_poll.py, payload/hooks/usage-budget.sh — these

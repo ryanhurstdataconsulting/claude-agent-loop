@@ -76,7 +76,7 @@ Contracts the template holds to:
 ## Composition (pairs with / hands off to)
 - Complements `audit-dispatch` and `audit-run`, which own the full, six-category
   audit on a schedule. This layer is faster and narrower; that one is complete.
-- Shares the read-only-scanner allowlist shape with `audit-run.sh`: named
+- Shares the read-only-scanner allowlist shape with `audit-run`: named
   scanners one at a time, never a blanket `Bash(git:*)`.
 - Produces nothing for `audit-store`. Store artifacts are local-only by
   invariant, and a CI runner is not this machine — the workflow's output lives

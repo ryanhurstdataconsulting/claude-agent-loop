@@ -1,11 +1,11 @@
 {
   "title": "Scheduler Liveness",
-  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Two independent, real liveness signals: (1) kind:\"run\" records with run_kind = \"audit\" in ~/.claude/metrics/*.jsonl, written by audit_run.sh's _emit_run_record every time the repo-audit launchd job runs a package audit (Phase 2) — recency of the newest such record is this scheduler's heartbeat. (2) obs_ship.py's own health signal: run_once()/main() returns and prints a JSON object with a \"reason\" field (one of \"ok\", \"tracer-unavailable\", \"all-spans-dropped\", \"export-failed\") on every invocation, added by Phase 2's final review specifically so a launchd job's log carries a liveness/health signal beyond a bare exit code. This dashboard feeds a future Alert 1 to be defined in Task 3 of this same phase; it only visualizes the raw recency/reason signals here, it does not itself alert.",
+  "description": "Query strings below are plain-English-adjacent pseudo-SQL, not copy-paste-ready syntax for any specific Grafana datasource plugin — no real backend/datasource is wired up in this build. Two independent, real liveness signals: (1) kind:\"run\" records with run_kind = \"audit\" in ~/.claude/metrics/*.jsonl, written by dispatch/run.sh's _emit_run_record every time the repo-audit launchd job runs a package audit (Phase 2) — recency of the newest such record is this scheduler's heartbeat. (2) obs_ship.py's own health signal: run_once()/main() returns and prints a JSON object with a \"reason\" field (one of \"ok\", \"tracer-unavailable\", \"all-spans-dropped\", \"export-failed\") on every invocation, added by Phase 2's final review specifically so a launchd job's log carries a liveness/health signal beyond a bare exit code. This dashboard feeds a future Alert 1 to be defined in Task 3 of this same phase; it only visualizes the raw recency/reason signals here, it does not itself alert.",
   "panels": [
     {
       "type": "stat",
       "title": "Time since last audit run",
-      "description": "Source: kind:\"run\" records where run_kind = \"audit\" (audit_run.sh, Phase 2). Age of the most recent ts_end.",
+      "description": "Source: kind:\"run\" records where run_kind = \"audit\" (dispatch/run.sh, Phase 2). Age of the most recent ts_end.",
       "targets": [
         {"query": "SELECT now() - max(ts_end) AS age FROM runs WHERE run_kind = 'audit'"}
       ]
