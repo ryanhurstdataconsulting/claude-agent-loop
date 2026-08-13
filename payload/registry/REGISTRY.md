@@ -56,3 +56,4 @@
 | bb-write | tool | meta-orchestration | Write a stamped row (task_id/phase/agent_id/ts/sha256) to the blackboard — shared_state, events, consensus_state, workflow_state, or artifacts |
 | bb-read | tool | meta-orchestration | Read blackboard rows back, filtered by task_id (or artifact_id for the artifacts table) |
 | bb-gc | tool | meta-orchestration | Nightly blackboard retention trim — 30-day shared_state/artifacts, 90-day events; consensus_state/workflow_state kept indefinitely |
+| worktree-exec | tool | meta-orchestration | Create/merge a per-step git worktree for an EXECUTE step marked "worktree": true — merge refuses until the step's own return.ok is true |

@@ -337,6 +337,12 @@ The registry is inert until a session runs the loop over it:
   consensus votes, resumable plan checkpoints, and large-payload artifact
   pointers) that sits alongside, not instead of, the metrics `*.jsonl`
   ledger: metrics is the permanent record, the blackboard is working state.
+- **`payload/tools/worktree_exec.py`** creates and merges back a per-step
+  git worktree at `~/.claude/worktrees/<task_id>/<step_id>/` for any EXECUTE
+  step whose plan (Phase 1 schema) marks `"worktree": true` — opt-in per
+  step. Merge-back is a normal `git merge` in that step's own project repo,
+  gated on the step's recorded `return.ok`, not on `loop_autocommit.sh`
+  (which only ever commits to this framework repo or `~/.claude`).
 
 ### 3. Doc-cascade layer — the instruction precedence
 
