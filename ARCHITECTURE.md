@@ -290,7 +290,9 @@ The source of truth for "what resources exist." All under
 `payload/registry/`:
 
 - **`REGISTRY.md`** — a compact one-line-per-resource index (the hook injects
-  this). Grouped into superpowers, skills, agents, MCPs, and tools.
+  this). Grouped into superpowers, skills, agents, MCPs, and tools; each row
+  also carries a `domain` column (one of 10 VoltAgent-matching values) that
+  the MATCH step uses to narrow its candidate set before it reads triggers.
 - **`TRIGGERS.md`** — a keyword / file-glob → resource shortcut map that
   accelerates the MATCH step.
 - **`guides/`** — 25 per-resource guides plus `_TEMPLATE.md`. Each guide carries
