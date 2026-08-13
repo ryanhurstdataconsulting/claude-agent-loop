@@ -43,6 +43,27 @@ Contracts worth stating explicitly, because callers rely on them:
 * ``--dry-run`` prints exactly what would happen and invokes nothing, so the
   launchd job can be exercised end to end without spending a cent.
 
+Which script each due package is handed is not hardcoded. ``--job-type NAME``
+selects ``jobs/NAME.yml`` beside this script, whose ``runner`` key names that
+script; the default, ``security-audit``, declares ``run.sh`` and is therefore
+exactly what the old hardcoded sibling lookup resolved to. The launchd plist
+passes no ``--job-type`` at all and so takes that default. A job definition is
+read by :func:`_parse_job_yaml`, a strict flat ``key: value`` reader rather
+than PyYAML — see its docstring for why an unattended nightly job may not take
+a third-party import, and why an unrecognised construct raises instead of
+being skipped. The job is resolved before the store is touched, so a bad
+``--job-type`` stops the run without creating anything.
+
+Everything else a job type could vary — the tier schedule, the due rules, the
+store layout, the digest — is shared machinery every job type uses
+identically, and is deliberately not parameterised here.
+
+Known follow-up, deferred with the second job type: ``--dispatch-run-id`` is
+built as ``night-<date>-<package>`` and does not carry the job type, so two
+job types sweeping one package on one night would emit the same parent run id.
+Adding it is correct once a second job type exists; doing it now would change
+the live nightly job's emitted OTel attribute for no present benefit.
+
 Stdlib only — no third-party imports, so this tool has no install step and
 no supply-chain surface of its own.
 """
@@ -70,6 +91,140 @@ NOTIFY_ENV = "AUDIT_NOTIFY"
 #: any machine, so the real root belongs in the local-only store config, which
 #: is never committed, rather than baked into a shipped file.
 DEFAULT_WORKSPACE = "~/dev"
+
+JOBS_DIR_ENV = "AUDIT_JOBS_DIR"
+
+#: The job this sweep runs when nothing says otherwise. The launchd plist
+#: passes no ``--job-type``, so this default is what the nightly run resolves,
+#: and ``jobs/security-audit.yml`` declares exactly the runner that used to be
+#: hardcoded here.
+DEFAULT_JOB_TYPE = "security-audit"
+
+#: The per-package script a runner lookup falls back to when it is given no job
+#: definition at all — :func:`run_package`'s own default, and nothing else. A
+#: real sweep always goes through :func:`load_job`, which REQUIRES ``runner``.
+DEFAULT_RUNNER = "run.sh"
+
+
+class JobError(Exception):
+    """Raised when a job definition is missing, malformed, or unsafe."""
+
+
+def jobs_dir():
+    """Return the directory holding the ``<job-type>.yml`` definitions.
+
+    ``AUDIT_JOBS_DIR`` overrides the sibling lookup and is read with no
+    default, so a harness that computes an EMPTY path gets the empty path and
+    fails loudly rather than silently falling through to the shipped
+    definitions. That is the same rule :func:`runner_bin` applies to
+    ``AUDIT_RUN_BIN``, for the same reason.
+    """
+    override = os.environ.get(JOBS_DIR_ENV)
+    if override is not None:
+        return override
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "jobs")
+
+
+def _parse_job_yaml(text, path):
+    """Parse the flat ``key: value`` subset a job definition may use.
+
+    Deliberately NOT a YAML implementation, and deliberately not PyYAML: every
+    tool in this directory is stdlib-only so that it has no install step, and
+    an unattended nightly job must not depend on a third-party import that may
+    not exist on the machine it runs on.
+
+    Accepts blank lines, full-line ``#`` comments, and ``key: value`` pairs
+    whose value may be wrapped in matched single or double quotes. Everything
+    else — an indented line, a list item, a line with no colon, an empty key, a
+    repeated key — raises :class:`JobError`.
+
+    Raising rather than skipping is the whole design. This file names the
+    executable an unattended sweep will run, so a construct the reader does not
+    understand must stop the run, not be dropped on the floor and leave the
+    sweep running something other than what the file says.
+    """
+    data = {}
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if raw[:1].isspace():
+            raise JobError(
+                "%s line %d: indented lines are not supported — a job "
+                "definition is a flat map of 'key: value' pairs"
+                % (path, lineno))
+        if stripped.startswith("-"):
+            raise JobError(
+                "%s line %d: list items are not supported — a job definition "
+                "is a flat map of 'key: value' pairs" % (path, lineno))
+        if ":" not in stripped:
+            raise JobError(
+                "%s line %d: expected 'key: value', got %r" % (path, lineno, raw))
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if not key:
+            raise JobError("%s line %d: empty key" % (path, lineno))
+        if key in data:
+            raise JobError("%s line %d: duplicate key %r" % (path, lineno, key))
+        data[key] = value
+    return data
+
+
+def load_job(job_type, directory=None):
+    """Load and validate the definition for ``job_type``. Return it as a dict.
+
+    ``job_type`` names the file ``<jobs-dir>/<job-type>.yml``, and the file
+    name is the job's identity: a ``job_type`` key inside the file that
+    disagrees with it is an error, not an override. The returned dict always
+    carries a validated ``runner`` and a ``job_type`` matching the file.
+
+    Two path checks, both because this resolves what an unattended sweep
+    executes: ``job_type`` must be a bare file name (no directory separator, no
+    leading dot), and ``runner`` must be relative to the dispatch directory
+    with no ``..`` segment. Either would otherwise let a job definition point
+    the nightly run at an arbitrary executable.
+    """
+    if not isinstance(job_type, str) or not job_type.strip():
+        raise JobError("job type must be a non-empty name; got %r" % (job_type,))
+    job_type = job_type.strip()
+    if job_type != os.path.basename(job_type) or job_type.startswith("."):
+        raise JobError(
+            "job type %r must be a bare file name, not a path — a job type "
+            "that can traverse directories would let the nightly sweep be "
+            "pointed at an arbitrary file" % (job_type,))
+
+    directory = directory if directory is not None else jobs_dir()
+    path = os.path.join(directory, job_type + ".yml")
+    try:
+        text = pathlib.Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise JobError("no job definition for %r at %s: %s" % (job_type, path, exc))
+
+    job = _parse_job_yaml(text, path)
+
+    declared = job.get("job_type")
+    if declared and declared != job_type:
+        raise JobError(
+            "%s declares job_type %r but was loaded as %r — the file name is "
+            "the job's identity" % (path, declared, job_type))
+
+    runner = job.get("runner")
+    if not runner:
+        raise JobError(
+            "%s declares no 'runner' — a job definition must name the script "
+            "each due package is handed" % path)
+    if os.path.isabs(runner) or ".." in pathlib.PurePosixPath(runner).parts:
+        raise JobError(
+            "%s: 'runner' must be relative to the dispatch directory with no "
+            "'..' segment; got %r — an unattended sweep must not be pointable "
+            "at an arbitrary executable" % (path, runner))
+
+    job["job_type"] = job_type
+    job["runner"] = runner
+    return job
 
 
 def head_sha(pkg_path):
@@ -350,22 +505,36 @@ def resolve_workspace(cli_value, cfg):
     return os.path.expanduser(DEFAULT_WORKSPACE)
 
 
-def audit_run_bin():
-    """Resolve the ``run.sh`` this sweep will invoke.
+def runner_bin(job=None):
+    """Resolve the per-package runner this sweep will invoke.
 
-    ``AUDIT_RUN_BIN`` overrides the sibling lookup, and the override is read
-    with ``os.environ.get`` and NO default so that a variable which is set
-    but EMPTY resolves to the empty string and fails loudly. That is the same
-    rule ``run.sh`` applies to ``AUDIT_CLAUDE_BIN``, and for the same
-    reason: a harness that computes an empty path must not fall through to
-    the real thing and start a live, billed agent session. A prior agent did
-    exactly that; the indirection exists so no test can repeat it.
+    The runner comes from the job definition — :func:`load_job` guarantees the
+    key is present and safe — resolved against this script's own directory. A
+    caller with no job definition at all falls back to :data:`DEFAULT_RUNNER`.
+
+    ``AUDIT_RUN_BIN`` overrides both, and the override is read with
+    ``os.environ.get`` and NO default so that a variable which is set but EMPTY
+    resolves to the empty string and fails loudly. That is the same rule
+    ``run.sh`` applies to ``AUDIT_CLAUDE_BIN``, and for the same reason: a
+    harness that computes an empty path must not fall through to the real thing
+    and start a live, billed agent session. A prior agent did exactly that; the
+    indirection exists so no test can repeat it.
     """
     override = os.environ.get(AUDIT_RUN_BIN_ENV)
     if override is not None:
         return override
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "run.sh")
+    runner = (job or {}).get("runner") or DEFAULT_RUNNER
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), runner)
+
+
+def audit_run_bin():
+    """Resolve the runner with no job definition — see :func:`runner_bin`.
+
+    Kept under its original name because it is the documented interface the
+    registry guide and the test harness both name, and because the ``AUDIT_*``
+    override namespace did not move when the files did.
+    """
+    return runner_bin()
 
 
 def _notify(text):
@@ -424,7 +593,7 @@ def run_package(entry, root, binary=None):
             result["error"] = "no resolved package path for %r" % (package,)
             return result
 
-        runner = binary if binary is not None else audit_run_bin()
+        runner = binary if binary is not None else runner_bin()
         if not runner:
             result["error"] = (
                 "%s is set but empty — refusing to guess the runner rather "
@@ -519,13 +688,25 @@ def main(argv=None):
              "would get, then stop — nothing is invoked and nothing is spent",
     )
     parser.add_argument(
+        "--job-type",
+        default=DEFAULT_JOB_TYPE,
+        help="the job definition to run, named by jobs/<job-type>.yml beside "
+             "this script (default: %s)" % DEFAULT_JOB_TYPE,
+    )
+    parser.add_argument(
         "--audit-run-bin",
         default=None,
-        help="path to run.sh (default: the AUDIT_RUN_BIN environment "
-             "variable, else the copy beside this script)",
+        help="path to the runner (default: the AUDIT_RUN_BIN environment "
+             "variable, else the job definition's `runner`, resolved beside "
+             "this script)",
     )
     args = parser.parse_args(argv)
     root = args.root or store.store_root()
+
+    # Resolve the job BEFORE anything touches the store. An unknown or
+    # malformed --job-type must stop the run without having git-init'd a store
+    # or written a `.gitignore` on its way out.
+    job = load_job(args.job_type)
 
     # Reconcile the layout before anything reads or writes it. This is what
     # repairs a store created by an earlier version, whose `.gitignore` was
@@ -537,11 +718,12 @@ def main(argv=None):
     now = datetime.datetime.now(datetime.timezone.utc)
     since = now.strftime(DATE_FORMAT)
     due = select_due(root, cfg, workspace, now)
-    runner = args.audit_run_bin if args.audit_run_bin is not None else audit_run_bin()
+    runner = args.audit_run_bin if args.audit_run_bin is not None else runner_bin(job)
 
     if args.dry_run:
         if args.as_json:
-            print(json.dumps({"dry_run": True, "due": due, "runner": runner},
+            print(json.dumps({"dry_run": True, "job_type": job["job_type"],
+                              "due": due, "runner": runner},
                              sort_keys=True))
             return 0
         print("audit_dispatch: dry run — nothing was invoked")
@@ -559,8 +741,9 @@ def main(argv=None):
         # No digest on an empty night: writing one would advance the render
         # window and fire the SessionStart nudge for a file with nothing in it.
         if args.as_json:
-            print(json.dumps({"dry_run": False, "due": [], "results": [],
-                              "alerts": [], "digest": None}, sort_keys=True))
+            print(json.dumps({"dry_run": False, "job_type": job["job_type"],
+                              "due": [], "results": [], "alerts": [],
+                              "digest": None}, sort_keys=True))
         else:
             print("nothing due")
         return 0
@@ -572,7 +755,8 @@ def main(argv=None):
         _notify(line)
 
     if args.as_json:
-        print(json.dumps({"dry_run": False, "due": due, "results": results,
+        print(json.dumps({"dry_run": False, "job_type": job["job_type"],
+                          "due": due, "results": results,
                           "alerts": alerts, "digest": digest_path},
                          sort_keys=True))
         return 0

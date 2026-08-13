@@ -1,0 +1,22 @@
+# security-audit — job #1 for the nightly dispatcher.
+#
+# This is the job the 03:17 launchd run has always executed; it was hardcoded
+# in dispatch.py until Phase 5 of the agent-loop-v2 design moved it here.
+# Selecting it is the default, so the plist passes no --job-type at all.
+#
+# FORMAT: a flat map of `key: value` lines, plus blank lines and full-line `#`
+# comments. Nothing else is accepted — no nesting, no lists, no inline
+# comments. dispatch.py parses this with a small strict reader rather than
+# PyYAML, because the tools in this directory are stdlib-only by design and an
+# unattended nightly job must not depend on a third-party import that may not
+# be installed on the machine it runs on. A line outside the subset raises
+# rather than being skipped: this file names the executable the sweep runs, so
+# a silent mis-parse would be a safety hole, not a convenience gap.
+#
+# Keys:
+#   job_type — must match this file's name; the file name is the identity.
+#   runner   — the per-package script, relative to tools/dispatch/. Never
+#              absolute, never containing '..'.
+job_type: security-audit
+runner: run.sh
+description: One unattended repo-security audit per due package, inside a throwaway worktree.

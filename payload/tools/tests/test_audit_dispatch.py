@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for audit_dispatch — the due-calculation policy for the repo audit scheduler.
+"""Tests for dispatch — the due-calculation policy for the repo audit scheduler.
 
 Hermetic: every case builds its store and workspace under
 ``tempfile.mkdtemp()`` and tears them down afterward. Nothing here touches
@@ -311,6 +311,26 @@ class TestMainCli(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
         shutil.rmtree(self.ws, ignore_errors=True)
+
+    def test_the_job_type_is_reported_in_the_json_output(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ad.main(["--root", self.tmp, "--workspace", self.ws,
+                          "--dry-run", "--json"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(buf.getvalue())["job_type"],
+                         "security-audit")
+
+    def test_an_unknown_job_type_stops_before_anything_is_created(self):
+        store_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, store_dir, ignore_errors=True)
+        with self.assertRaises(ad.JobError):
+            ad.main(["--root", store_dir, "--workspace", self.ws,
+                     "--dry-run", "--job-type", "no-such-job"])
+        # The job is resolved before ensure_store(), so a bad --job-type must
+        # not have git-init'd a store or written a .gitignore on its way out.
+        self.assertFalse(os.path.exists(os.path.join(store_dir, ".git")))
+        self.assertFalse(os.path.exists(os.path.join(store_dir, "audit")))
 
     def test_json_output_lists_due_packages(self):
         buf = io.StringIO()
@@ -657,6 +677,124 @@ class TestAuditRunBinIndirection(unittest.TestCase):
     def test_the_default_is_the_sibling_run_script(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertEqual(ad.audit_run_bin(), str(DISPATCH / "run.sh"))
+
+
+class TestJobDefinitions(unittest.TestCase):
+    """The job definition is what makes the dispatcher job-type-generic.
+
+    It names the executable an unattended nightly sweep will run, so every
+    case here is either "the shipped job resolves to what the hardcoded
+    lookup used to resolve to" or "a definition the reader does not fully
+    understand is refused rather than half-applied".
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def _write(self, name, text):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return path
+
+    def test_the_shipped_security_audit_job_declares_run_sh(self):
+        job = ad.load_job("security-audit")
+        self.assertEqual(job["job_type"], "security-audit")
+        self.assertEqual(job["runner"], "run.sh")
+
+    def test_the_shipped_job_resolves_to_the_sibling_runner(self):
+        # The whole point of job #1: --job-type security-audit must resolve to
+        # exactly the path the hardcoded sibling lookup resolved to before.
+        with mock.patch.dict(os.environ, {}, clear=True):
+            resolved = ad.runner_bin(ad.load_job("security-audit"))
+        self.assertEqual(resolved, str(DISPATCH / "run.sh"))
+
+    def test_comments_and_blank_lines_are_ignored(self):
+        self._write("j.yml", "# a comment\n\njob_type: j\nrunner: r.sh\n")
+        self.assertEqual(ad.load_job("j", self.tmp)["runner"], "r.sh")
+
+    def test_quoted_values_are_unquoted(self):
+        self._write("j.yml", 'job_type: j\nrunner: "r.sh"\n')
+        self.assertEqual(ad.load_job("j", self.tmp)["runner"], "r.sh")
+
+    def test_a_missing_job_definition_is_loud(self):
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("no-such-job", self.tmp)
+        self.assertIn("no-such-job", str(caught.exception))
+
+    def test_a_job_without_a_runner_is_refused(self):
+        self._write("j.yml", "job_type: j\n")
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("j", self.tmp)
+        self.assertIn("runner", str(caught.exception))
+
+    def test_an_absolute_runner_is_refused(self):
+        self._write("j.yml", "runner: /bin/sh\n")
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("j", self.tmp)
+        self.assertIn("relative", str(caught.exception))
+
+    def test_a_runner_escaping_the_dispatch_directory_is_refused(self):
+        self._write("j.yml", "runner: ../../evil.sh\n")
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("j", self.tmp)
+        self.assertIn("..", str(caught.exception))
+
+    def test_a_job_type_containing_a_path_is_refused(self):
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("../../etc/passwd", self.tmp)
+        self.assertIn("bare file name", str(caught.exception))
+
+    def test_an_empty_job_type_is_refused(self):
+        with self.assertRaises(ad.JobError):
+            ad.load_job("   ", self.tmp)
+
+    def test_a_mismatched_declared_job_type_is_refused(self):
+        self._write("j.yml", "job_type: something-else\nrunner: r.sh\n")
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("j", self.tmp)
+        self.assertIn("something-else", str(caught.exception))
+
+    def test_nested_structure_is_refused_rather_than_silently_dropped(self):
+        self._write("j.yml", "runner: r.sh\nnested:\n  key: value\n")
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("j", self.tmp)
+        self.assertIn("flat", str(caught.exception))
+
+    def test_a_list_item_is_refused_rather_than_silently_dropped(self):
+        self._write("j.yml", "runner: r.sh\n- one\n")
+        with self.assertRaises(ad.JobError):
+            ad.load_job("j", self.tmp)
+
+    def test_a_line_with_no_colon_is_refused(self):
+        self._write("j.yml", "runner: r.sh\ngarbage\n")
+        with self.assertRaises(ad.JobError):
+            ad.load_job("j", self.tmp)
+
+    def test_a_duplicate_key_is_refused(self):
+        self._write("j.yml", "runner: r.sh\nrunner: other.sh\n")
+        with self.assertRaises(ad.JobError) as caught:
+            ad.load_job("j", self.tmp)
+        self.assertIn("duplicate", str(caught.exception))
+
+    def test_the_env_override_still_wins_over_the_job_definition(self):
+        with mock.patch.dict(os.environ, {ad.AUDIT_RUN_BIN_ENV: "/stub/x.sh"}):
+            self.assertEqual(ad.runner_bin({"runner": "r.sh"}), "/stub/x.sh")
+
+    def test_an_empty_env_override_still_resolves_empty(self):
+        # Same safety rule as the pre-job-type lookup: an override that is set
+        # but EMPTY must not fall through to a real, billed runner.
+        with mock.patch.dict(os.environ, {ad.AUDIT_RUN_BIN_ENV: ""}):
+            self.assertEqual(ad.runner_bin({"runner": "r.sh"}), "")
+
+    def test_the_jobs_dir_env_override_is_honoured(self):
+        with mock.patch.dict(os.environ, {ad.JOBS_DIR_ENV: self.tmp}):
+            self.assertEqual(ad.jobs_dir(), self.tmp)
+
+    def test_the_default_jobs_dir_is_beside_the_dispatcher(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(ad.jobs_dir(), str(DISPATCH / "jobs"))
 
 
 if __name__ == "__main__":
