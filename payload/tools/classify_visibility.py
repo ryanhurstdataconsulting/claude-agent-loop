@@ -59,6 +59,19 @@ _STRUCTURAL = [
 
 TEXT_LABEL = "<text>"
 
+# A GitHub-Actions style pin (`uses: actions/checkout@v4`, `@<40-hex sha>`)
+# puts a version reference after the "@", not a machine — treating it as an
+# ssh-host marked every workflow template UNSURE and tripped the autocommit
+# gate on files with no host in them.
+_PIN_HOST = re.compile(r"^(?:v\d+(?:\.\d+)*|[0-9a-fA-F]{7,40})$")
+
+
+def _ssh_host_present(rx, text):
+    """True when an ssh-style match has a real host, not a version pin."""
+    return any(
+        not _PIN_HOST.match(m.group(0).rsplit("@", 1)[1])
+        for m in rx.finditer(text))
+
 
 def load_markers(path):
     """Return the marker list at ``path``, or ``None`` if it yields no markers.
@@ -92,7 +105,10 @@ def structural_signals(text):
     """Return the list of structural-signal names present in ``text``."""
     found = []
     for name, rx in _STRUCTURAL:
-        if rx.search(text):
+        if name == "ssh-host":
+            if _ssh_host_present(rx, text):
+                found.append(name)
+        elif rx.search(text):
             found.append(name)
     return found
 

@@ -82,6 +82,32 @@ class TestClassifyCore(unittest.TestCase):
         verdict, _ = cv.classify("bind to 10.1.2.3 on boot", "x.md", MARKERS)
         self.assertEqual(verdict, "UNSURE")
 
+    def test_actions_version_pin_is_not_an_ssh_host(self):
+        # A GitHub-Actions `uses:` pin names a version, not a machine.
+        verdict, _ = cv.classify("uses: actions/checkout@v4",
+                                 ".github/workflows/ci.yml", MARKERS)
+        self.assertEqual(verdict, "GENERIC")
+
+    def test_actions_dotted_version_pin_is_not_an_ssh_host(self):
+        verdict, _ = cv.classify("uses: actions/setup-python@v5.1.0",
+                                 ".github/workflows/ci.yml", MARKERS)
+        self.assertEqual(verdict, "GENERIC")
+
+    def test_actions_sha_pin_is_not_an_ssh_host(self):
+        verdict, _ = cv.classify(
+            "uses: docker/build-push-action@"
+            "3b5e8027fcad23fda98b2e3ac259d8d67585f671",
+            ".github/workflows/ci.yml", MARKERS)
+        self.assertEqual(verdict, "GENERIC")
+
+    def test_bare_user_at_host_still_fires_beside_a_pin(self):
+        # A pin in the same text must not mask a real ssh target.
+        verdict, detail = cv.classify(
+            "uses: actions/checkout@v4 then ssh deploy@build01",
+            "x.md", MARKERS)
+        self.assertEqual(verdict, "UNSURE")
+        self.assertIn("ssh-host", detail)
+
     def test_clean_generic_content(self):
         verdict, detail = cv.classify(
             "A generic tool that lints a table. 12 rows checked.",
