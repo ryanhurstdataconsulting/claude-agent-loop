@@ -279,6 +279,15 @@ commits within 24 hours. Run the tests. Capture the real output. Never summarize
 a result you did not observe, and never report a command's outcome as an exit
 code alone.
 
+RESOURCE LOOP — ANNOUNCE (a schema contract; a metrics harvester parses it)
+Before your first action, print exactly one line:
+  Resource Loop — deploying: <exact registry id> (<category>) — <reason>
+or, when nothing in the registry matches your step:
+  Resource Loop — no registry match; proceeding bare.
+Each deployed <name> must be the exact registry id — a paraphrase silently
+breaks per-resource attribution. Whatever you deploy is also recorded in
+`skills_used` on your return.
+
 RULES THAT APPLY TO EVERY STEP
 - Grammar is a correctness requirement, not a nit. Proofread everything you
   emit, and especially any prose the software generates for an end user. Watch

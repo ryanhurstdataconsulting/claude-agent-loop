@@ -143,6 +143,17 @@ class TestCreateAssignsAndBriefs(TempCase):
         self.assertIn(step["id"], step["brief"])
         self.assertEqual(step["status"], "pending")
 
+    def test_brief_carries_the_announce_contract(self):
+        # The Resource Loop ANNOUNCE line is a schema contract the metrics
+        # harvester parses; every rendered brief must carry it verbatim so
+        # dispatched subagents stop proceeding bare without announcing.
+        plan = pt.create("write the quarterly data pipeline", source="direct",
+                          plan_doc=None, project="p", branch="b",
+                          roles_dir=self.roles_dir)
+        brief = plan["steps"][0]["brief"]
+        self.assertIn("Resource Loop — deploying:", brief)
+        self.assertIn("no registry match; proceeding bare", brief)
+
     def test_from_plan_creates_one_step_per_heading_all_briefed(self):
         doc = "### Task 1: First thing\n### Task 2: Second thing\n"
         plan = pt.create("parent task", source="plan", plan_doc="doc.md",
