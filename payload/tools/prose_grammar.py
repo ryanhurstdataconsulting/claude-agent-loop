@@ -46,6 +46,14 @@ _A_WORDS = {
     "utility", "utilities", "utilize", "utilized", "utopia", "ubiquitous",
     "ukulele", "uranium", "euro", "europe", "european", "euphoria",
     "euphemism", "eulogy", "eugenics", "ewe", "one", "once", "oneself",
+    # Initialisms that are conventionally written lowercase in technical prose
+    # and so reach the plain-lowercase branch below, where a leading "u" reads
+    # as a vowel. Every one of them is SPOKEN letter by letter starting with
+    # "you", so each takes "a": a uuid, a url, a ui, a usb port. Without these
+    # the linter "corrects" correct prose to "an uuid", which is the one
+    # outcome it is built to avoid.
+    "uuid", "uuids", "url", "urls", "uri", "uris", "urn", "urns",
+    "ui", "uis", "ux", "usb", "utf", "uid", "uids",
 }
 
 # Words that start with a consonant *letter* (h) but a vowel *sound* → "an".
