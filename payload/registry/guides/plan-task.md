@@ -75,6 +75,13 @@ does **not** fail open.
 - Imports `route_role.route()` directly and calls it per step, and renders
   each step's dispatch prompt itself (folded in from the former
   `make_brief.py`) — no separate BRIEF call.
+- A supervisor session that has already dispatched `resource-router` for the
+  same ask MAY override a produced step's deterministic `agent`/`skills`/
+  `model` assignment with the router's loadout before dispatch — see
+  `registry/guides/resource-router.md`. This is a documented calling
+  convention, not a code path inside `plan_task.py`: the tool's own
+  `create()`/`assign()` always call `route_role.route()` directly, because a
+  CLI tool has no Agent-tool access to dispatch a router with.
 - Hands each recorded step to `score_task.py --auto`, which folds in what
   `assess_task.py` used to do.
 
