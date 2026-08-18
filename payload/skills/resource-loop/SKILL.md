@@ -5,7 +5,7 @@ description: Run at the start of EVERY session and before every new task — mat
 
 # Resource Loop
 
-A closed loop: **MATCH → ANNOUNCE → ROUTE → EXECUTE → SCORE → LEARN.** The
+A closed loop: **MATCH+ROUTE → ANNOUNCE → EXECUTE → SCORE → LEARN.** The
 registry index is injected at session start inside `<resource-loop>` tags. If it
 is absent (hook failure, subagent context), read
 `~/.claude/registry/REGISTRY.md` directly.
@@ -70,36 +70,53 @@ never writes inside a client project on its own.
 Skip the plan for a trivial single-step task: measuring a one-line fix costs
 more than the measurement is worth.
 
-## The six steps
+## The five steps
 
-1. **MATCH** — semantically match the task against the index. Think in task
-   shapes, not keywords: "make the chart pop" matches
-   visual-hierarchy-layered-charts. Each row also carries a `domain` column
-   (`core-dev` · `language` · `infra` · `quality-security` · `data-ai` ·
-   `dev-experience` · `specialized-domains` · `business-product` ·
-   `meta-orchestration` · `research-analysis`) — narrow to the task's domain
-   first, then semantically match within that smaller set. This is a
-   candidate-set filter, not a hard gate: when a task genuinely spans two
-   domains, both stay reachable. Consult `~/.claude/registry/TRIGGERS.md` as a
-   keyword and file-glob shortcut alongside the semantic match — it is an
-   accelerator, not a replacement for reading the task. Read the full guide
-   (`~/.claude/registry/guides/<name>.md`) for anything you will deploy.
+1. **MATCH+ROUTE** — dispatch the `resource-router` agent (not a hand-read of
+   the registry) for every non-trivial task, before deploying anything else.
+   Give it the task text and, if you know it, the project's absolute path so
+   it can check for a `.claude/SUBAGENTS.md` override. It reads the live
+   registry, the skill catalog, and the agent roster itself — you do not need
+   to paste any of that into its prompt. It returns a structured loadout:
+   the exact ANNOUNCE line(s), ordered lead skills, agents to dispatch (each
+   with model/effort and a brief outline), MCPs, tools, any ephemeral
+   task-scoped resource it composed on the spot, and any durable gaps.
 
-   **Role hop (the deterministic HOOK → AGENT edge).** Before the semantic
-   match, run the role router:
+   Relay its ANNOUNCE block verbatim as your own ANNOUNCE (step 2, below) —
+   do not re-derive it. Dispatch the agents/MCPs/tools it returned at the
+   model/effort it specified. If it returned GAPS, file the candidate stub
+   yourself exactly as the "Gaps" section below describes — the router only
+   recommends the stub, it never writes one.
+
+   **Skip this step only for genuinely trivial or conversational turns** —
+   answering a quick question, a one-line fix, or continuing an
+   already-routed task from earlier in the same session. Anything with
+   independent parts, an unfamiliar domain, or a task-shape you haven't
+   already routed this session goes through the router.
+
+   **Deterministic fallback.** `route_role.py`'s keyword-phrase scoring and
+   `TRIGGERS.md`'s keyword rows still exist and still work — they are what
+   `plan_task.py --new`/`--assign` calls directly (a CLI tool has no Agent
+   tool to dispatch a router with), and what a subagent context falls back to
+   if it has no Agent tool of its own:
    ```
    python3 ~/.claude/tools/route_role.py "<the task text>"
    ```
    It scores the task against every role agent in `~/.claude/agents/roles/`
-   (data-scientist, data-engineer, dba, cloud-architect, product-manager, …) by
-   plain keyword arithmetic — the same task always routes the same way. On a
-   confident match it prints a `Role — <role> (…) · skills: … · mcps: …` line:
-   include that line with your ANNOUNCE, treat the role's declared skills as
-   your MATCH shortlist (AGENT → SKILL), and prefer its declared MCPs where they
-   are configured (connect nothing new — nudge `environment-bootstrap` for
-   unconfigured ones). `Role — generalist` means no confident role: skip the
-   hop and match normally. The role layer organizes; it never gates — any
-   library skill remains directly invocable.
+   by plain keyword arithmetic — the same task always routes the same way.
+   On a confident match it prints a `Role — <role> (…) · skills: … · mcps: …`
+   line; `Role — generalist` means no confident match. Read
+   `~/.claude/registry/guides/resource-router.md` for the composition
+   contract between the two: a supervisor session that already has a router
+   loadout for a given ask may override a plan step's deterministic
+   assignment with it before dispatch; nothing else changes about how
+   `plan_task.py` runs.
+
+   *(Model-tier reference the router applies: planning/architecture/synthesis
+   → session model; creation-heavy code/guides/skills/prose → `model: opus`;
+   mechanical extraction/sweeps/lint-fixes/probes → `model: sonnet` (`haiku`
+   for trivial probes). Opus creators sub-delegate mechanical subtasks to
+   Sonnet.)*
 2. **ANNOUNCE** — before work starts, output exactly one line:
    `Resource Loop — deploying: <name> (<category>) — <reason>[; …]`
    or, when nothing matches:
@@ -114,18 +131,11 @@ more than the measurement is worth.
    (`a, b, c — shared reason`). A paraphrased or misspelled name silently breaks
    the learning loop — the score you record later cannot be tied back to the
    resource.
-3. **ROUTE** — when dispatching subagents:
-   | Work type | Model |
-   |---|---|
-   | Planning, architecture, synthesis review | session model |
-   | Creation-heavy (code, guides, skills, prose) | `model: opus` |
-   | Mechanical (extraction, sweeps, lint fixes, probes) | `model: sonnet` (haiku for trivial probes) |
-   Opus creators sub-delegate mechanical subtasks to Sonnet.
-4. **EXECUTE** — do the work. Carry the whole loop into every subagent brief:
+3. **EXECUTE** — do the work. Carry the whole loop into every subagent brief:
    paste the ANNOUNCE contract (exact registry ids, comma-separated), the
    relevant guide pointers, the ROUTE table, and the SCORE duty below. A
    subagent that does not announce and score is a task the loop cannot see.
-5. **SCORE** — at task close, first fill in the objective half, then the
+4. **SCORE** — at task close, first fill in the objective half, then the
    subjective one. For a task run through `plan_task.py` (a plan with steps),
    assess it objectively before self-scoring:
    ```
@@ -151,7 +161,7 @@ more than the measurement is worth.
    the registry rather than forcing a poor match:
    `score_task.py --new-scale <id> --levels "best>worst" --applies-to "…" --desc "…"`.
    Read `~/.claude/learning/SCALES.md` for the current scales.
-6. **LEARN** — the loop's closing act. After SCORE, run the heuristics engine
+5. **LEARN** — the loop's closing act. After SCORE, run the heuristics engine
    over the recorded metrics and act on what fired:
    ```
    python3 ~/.claude/tools/heuristics_eval.py --task-id <id> [--session-id <current>]
